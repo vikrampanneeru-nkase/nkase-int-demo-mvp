@@ -1,0 +1,191 @@
+nohup: ignoring input
+/home/admin/nkase-int-demo-code/dfir-api/venv/lib/python3.11/site-packages/pydantic/_internal/_config.py:373: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+INFO:     Started server process [89732]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Listing instances in account: 339751003344
+Listing instances in account: 339751003344
+Listing buckets in account: 339751003344
+INFO:     183.82.116.218:0 - "GET /api/investigations/dynamodb HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/s3 HTTP/1.1" 200 OK
+security_groups are [{'GroupId': 'sg-06ab478848944848e', 'GroupName': 'ISOLATE SG NKASE-79b58ad0-0ec3-4498-8729-7d9c87d909de'}]
+2025-06-09 13:18:16,733 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2025-06-09 13:18:16,733 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-06-09 13:18:16,738 INFO sqlalchemy.engine.Engine select current_schema()
+2025-06-09 13:18:16,738 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-06-09 13:18:16,743 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2025-06-09 13:18:16,744 INFO sqlalchemy.engine.Engine [raw sql] ()
+2025-06-09 13:18:16,747 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:18:16,753 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:18:16,753 INFO sqlalchemy.engine.Engine [generated in 0.00020s] ('i-0fd1fad45e871e800', '339751003344', 'vpc-0cc9e427f9fa29954')
+security_groups are [{'GroupId': 'sg-00d3d9f47908e8e44', 'GroupName': 'default'}]
+2025-06-09 13:18:16,759 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:18:16,759 INFO sqlalchemy.engine.Engine [cached since 0.006385s ago] ('i-0b9cc059e40aaa1d9', '339751003344', 'vpc-0cc9e427f9fa29954')
+2025-06-09 13:18:16,761 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/investigations HTTP/1.1" 200 OK
+2025-06-09 13:18:17,861 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:18:17,863 INFO sqlalchemy.engine.Engine SELECT activity_log.id, activity_log.account_id, activity_log.instance_id, activity_log.vpc_id, activity_log.action, activity_log.status, activity_log.message, activity_log.performed_at 
+FROM activity_log ORDER BY activity_log.performed_at DESC
+2025-06-09 13:18:17,863 INFO sqlalchemy.engine.Engine [generated in 0.00015s] ()
+2025-06-09 13:18:17,869 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard HTTP/1.1" 200 OK
+2025-06-09 13:18:19,589 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:18:19,591 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 13:18:19,592 INFO sqlalchemy.engine.Engine [generated in 0.00016s] ()
+2025-06-09 13:18:19,596 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/88b37554-add1-49ad-926b-eed5f02da215 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/7e93a56f-f424-4fcd-a3ed-d1ad48334bf5 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/7e93a56f-f424-4fcd-a3ed-d1ad48334bf5 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/f0d680a7-eb94-4822-aade-b5cd83470a07 HTTP/1.1" 200 OK
+Listing instances in account: 339751003344
+Listing buckets in account: 339751003344
+Listing instances in account: 339751003344
+INFO:     183.82.116.218:0 - "GET /api/investigations/dynamodb HTTP/1.1" 200 OK
+Listing instances in account: 339751003344
+security_groups are [{'GroupId': 'sg-06ab478848944848e', 'GroupName': 'ISOLATE SG NKASE-79b58ad0-0ec3-4498-8729-7d9c87d909de'}]
+2025-06-09 13:19:02,219 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:19:02,219 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:02,220 INFO sqlalchemy.engine.Engine [cached since 45.47s ago] ('i-0fd1fad45e871e800', '339751003344', 'vpc-0cc9e427f9fa29954')
+security_groups are [{'GroupId': 'sg-00d3d9f47908e8e44', 'GroupName': 'default'}]
+2025-06-09 13:19:02,224 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:02,224 INFO sqlalchemy.engine.Engine [cached since 45.47s ago] ('i-0b9cc059e40aaa1d9', '339751003344', 'vpc-0cc9e427f9fa29954')
+2025-06-09 13:19:02,227 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/investigations HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/s3 HTTP/1.1" 200 OK
+security_groups are [{'GroupId': 'sg-06ab478848944848e', 'GroupName': 'ISOLATE SG NKASE-79b58ad0-0ec3-4498-8729-7d9c87d909de'}]
+2025-06-09 13:19:02,342 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:19:02,343 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:02,343 INFO sqlalchemy.engine.Engine [cached since 45.59s ago] ('i-0fd1fad45e871e800', '339751003344', 'vpc-0cc9e427f9fa29954')
+security_groups are [{'GroupId': 'sg-00d3d9f47908e8e44', 'GroupName': 'default'}]
+2025-06-09 13:19:02,346 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:02,346 INFO sqlalchemy.engine.Engine [cached since 45.59s ago] ('i-0b9cc059e40aaa1d9', '339751003344', 'vpc-0cc9e427f9fa29954')
+2025-06-09 13:19:02,348 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/investigations/new HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "POST /api/investigations/Mitigate HTTP/1.1" 200 OK
+Listing instances in account: 339751003344
+security_groups are [{'GroupId': 'sg-06ab478848944848e', 'GroupName': 'ISOLATE SG NKASE-79b58ad0-0ec3-4498-8729-7d9c87d909de'}]
+2025-06-09 13:19:07,356 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:19:07,358 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:07,358 INFO sqlalchemy.engine.Engine [cached since 50.6s ago] ('i-0fd1fad45e871e800', '339751003344', 'vpc-0cc9e427f9fa29954')
+security_groups are [{'GroupId': 'sg-00d3d9f47908e8e44', 'GroupName': 'default'}]
+2025-06-09 13:19:07,361 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:19:07,361 INFO sqlalchemy.engine.Engine [cached since 50.61s ago] ('i-0b9cc059e40aaa1d9', '339751003344', 'vpc-0cc9e427f9fa29954')
+2025-06-09 13:19:07,363 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/investigations/new HTTP/1.1" 200 OK
+2025-06-09 13:19:13,722 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:19:13,723 INFO sqlalchemy.engine.Engine SELECT activity_log.id, activity_log.account_id, activity_log.instance_id, activity_log.vpc_id, activity_log.action, activity_log.status, activity_log.message, activity_log.performed_at 
+FROM activity_log ORDER BY activity_log.performed_at DESC
+2025-06-09 13:19:13,723 INFO sqlalchemy.engine.Engine [cached since 55.86s ago] ()
+2025-06-09 13:19:13,726 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard HTTP/1.1" 200 OK
+2025-06-09 13:19:15,010 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:19:15,010 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 13:19:15,010 INFO sqlalchemy.engine.Engine [cached since 55.42s ago] ()
+2025-06-09 13:19:15,016 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+Listing instances in account: 339751003344
+2025-06-09 13:21:25,976 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:21:25,976 INFO sqlalchemy.engine.Engine SELECT activity_log.id, activity_log.account_id, activity_log.instance_id, activity_log.vpc_id, activity_log.action, activity_log.status, activity_log.message, activity_log.performed_at 
+FROM activity_log ORDER BY activity_log.performed_at DESC
+2025-06-09 13:21:25,976 INFO sqlalchemy.engine.Engine [cached since 188.1s ago] ()
+2025-06-09 13:21:26,168 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard HTTP/1.1" 200 OK
+Listing buckets in account: 339751003344
+Listing instances in account: 339751003344
+INFO:     183.82.116.218:0 - "GET /api/investigations/dynamodb HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/s3 HTTP/1.1" 200 OK
+security_groups are [{'GroupId': 'sg-06ab478848944848e', 'GroupName': 'ISOLATE SG NKASE-79b58ad0-0ec3-4498-8729-7d9c87d909de'}]
+2025-06-09 13:21:26,718 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:21:26,719 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:21:26,719 INFO sqlalchemy.engine.Engine [cached since 190s ago] ('i-0fd1fad45e871e800', '339751003344', 'vpc-0cc9e427f9fa29954')
+security_groups are [{'GroupId': 'sg-00d3d9f47908e8e44', 'GroupName': 'default'}]
+2025-06-09 13:21:26,722 INFO sqlalchemy.engine.Engine SELECT quarantined_instances.is_quarantined 
+FROM quarantined_instances 
+WHERE quarantined_instances.instance_id = $1::VARCHAR AND quarantined_instances.account_id = $2::VARCHAR AND quarantined_instances.vpc_id = $3::VARCHAR
+2025-06-09 13:21:26,722 INFO sqlalchemy.engine.Engine [cached since 190s ago] ('i-0b9cc059e40aaa1d9', '339751003344', 'vpc-0cc9e427f9fa29954')
+2025-06-09 13:21:26,724 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/investigations HTTP/1.1" 200 OK
+2025-06-09 13:21:28,016 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 13:21:28,017 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 13:21:28,017 INFO sqlalchemy.engine.Engine [cached since 188.4s ago] ()
+2025-06-09 13:21:28,020 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+2025-06-09 14:11:38,989 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 14:11:38,989 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 14:11:38,989 INFO sqlalchemy.engine.Engine [cached since 3199s ago] ()
+2025-06-09 14:11:38,999 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/7e93a56f-f424-4fcd-a3ed-d1ad48334bf5 HTTP/1.1" 200 OK
+2025-06-09 14:12:30,190 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 14:12:30,190 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 14:12:30,190 INFO sqlalchemy.engine.Engine [cached since 3251s ago] ()
+2025-06-09 14:12:30,194 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+2025-06-09 14:12:34,768 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 14:12:34,768 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 14:12:34,769 INFO sqlalchemy.engine.Engine [cached since 3255s ago] ()
+2025-06-09 14:12:34,772 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+2025-06-09 14:13:09,313 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 14:13:09,313 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 14:13:09,313 INFO sqlalchemy.engine.Engine [cached since 3290s ago] ()
+2025-06-09 14:13:09,316 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+2025-06-09 15:39:31,638 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 15:39:31,638 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 15:39:31,638 INFO sqlalchemy.engine.Engine [cached since 8472s ago] ()
+2025-06-09 15:39:31,644 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+2025-06-09 16:11:06,040 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2025-06-09 16:11:06,040 INFO sqlalchemy.engine.Engine SELECT mitigation_jobs.job_id, mitigation_jobs.instance_id, mitigation_jobs.stage, mitigation_jobs.details, mitigation_jobs.created_at, mitigation_jobs.updated_at 
+FROM mitigation_jobs
+2025-06-09 16:11:06,040 INFO sqlalchemy.engine.Engine [cached since 1.037e+04s ago] ()
+2025-06-09 16:11:06,044 INFO sqlalchemy.engine.Engine ROLLBACK
+INFO:     183.82.116.218:0 - "GET /api/dashboard/mitigated HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/b290f023-5d22-43ff-9dbe-c4069cd132f1 HTTP/1.1" 200 OK
+INFO:     183.82.116.218:0 - "GET /api/investigations/mitigation/status/25f718c3-527a-4233-b259-ee78fc6907ef HTTP/1.1" 200 OK

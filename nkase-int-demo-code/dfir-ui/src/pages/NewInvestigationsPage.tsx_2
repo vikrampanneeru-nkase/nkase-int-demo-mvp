@@ -1,0 +1,174 @@
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { fetcher } from "../api/fetcher";
+import apiClient from "@/api/client";
+
+type EC2Instance = {
+  id: string;
+  name: string;
+  instance_type: string;
+  state: string;
+  availability_zone: string;
+  private_ip: string;
+  public_ip: string | null;
+  volume_ids: string[];
+};
+
+export default function NewInvestigationsPage() {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionResults, setActionResults] = useState<string[]>([]);
+  const [loadingInstances, setLoadingInstances] = useState<string[]>([]);
+
+
+  const {
+    data,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery<EC2Instance[]>({
+    queryKey: ["investigations_new"],
+    queryFn: async () => {
+      const raw = await fetcher("investigations/new");
+
+      const mapped = raw.map((item: any): EC2Instance => {
+        const nameTag = item.Tags?.find((tag: any) => tag.Key === "Name");
+        return {
+          id: item.InstanceId,
+          name: nameTag?.Value || "Unnamed",
+          instance_type: item.InstanceType,
+          state: item.State,
+          availability_zone: item.AvailabilityZone,
+          private_ip: item.PrivateIpAddress,
+          public_ip: item.PublicIpAddress || null,
+          volume_ids: item.VolumeIds || [],
+        };
+      });
+
+      return mapped;
+    },
+  });
+
+  const toggleCheckbox = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+  const isActionInProgress = selectedIds.some((id) =>
+  loadingInstances.includes(id)
+  );
+  const handleAction = async (action: "quarantine" | "mitigate") => {
+  if (selectedIds.length === 0) {
+    setActionMessage("Please select at least one instance.");
+    setActionResults([]);
+    return;
+  }
+
+  setLoadingInstances(selectedIds); // Disable buttons for selected instances
+
+  try {
+    const response = await apiClient.post(`/investigations/${action}`, {
+      instance_ids: selectedIds,
+    });
+
+    setActionResults(response.data as string[]);
+    setActionMessage(null);
+    setSelectedIds([]);
+    await refetch();
+  } catch (err: any) {
+    setActionMessage(`Error during ${action}: ${err.message}`);
+    setActionResults([]);
+  } finally {
+    setLoadingInstances([]); // Re-enable buttons
+  }
+};
+
+  if (isLoading) return <div className="p-4">Loading investigations...</div>;
+  if (error) return <div className="p-4">Error loading investigations</div>;
+  if (!Array.isArray(data) || data.length === 0) {
+    return <div className="p-4">No investigations found.</div>;
+  }
+
+  return (
+    <div className="p-4">
+      <h2 className="text-2xl font-bold mb-4">New Investigations</h2>
+
+      {/* Action Buttons */}
+      <div className="mb-4 flex gap-4">
+        <button
+  onClick={() => handleAction("quarantine")}
+  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+  disabled={selectedIds.length === 0 || isActionInProgress}
+>
+  {isActionInProgress ? "Processing..." : "Quarantine"}
+</button>
+
+<button
+  onClick={() => handleAction("mitigate")}
+  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+  disabled={selectedIds.length === 0 || isActionInProgress}
+>
+  {isActionInProgress ? "Processing..." : "Mitigate"}
+</button>
+
+      </div>
+
+      {/* Action Response Message */}
+      {actionMessage && (
+        <div className="mb-4 text-sm text-green-700 font-medium">
+          {actionMessage}
+        </div>
+      )}
+
+      {/* Results Display */}
+      {actionResults.length > 0 && (
+        <ul className="list-disc pl-6 space-y-1 mb-4">
+          {actionResults.map((line, idx) => {
+            const isSuccess = line.includes("Success");
+            const textColor = isSuccess ? "text-green-600" : "text-red-600";
+            return (
+              <li key={idx} className={`text-sm font-medium ${textColor}`}>
+                {line.replace("status : ", "")}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Grid of EC2 Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {data.map((item) => (
+          <div
+            key={item.id}
+            className="bg-white p-4 rounded shadow flex gap-2 items-start"
+          >
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={selectedIds.includes(item.id)}
+              onChange={() => toggleCheckbox(item.id)}
+            />
+            <div className="text-sm text-gray-800">
+              <div className="font-bold text-base">{item.name}</div>
+              <div className="mt-1 text-gray-600">ID: {item.id}</div>
+              <div>Type: {item.instance_type}</div>
+              <div>State: {item.state}</div>
+              <div>AZ: {item.availability_zone}</div>
+              <div>Private IP: {item.private_ip}</div>
+              <div>Public IP: {item.public_ip || "N/A"}</div>
+              <div className="mt-2">
+                <strong>Volume ID{item.volume_ids.length > 1 ? "s" : ""}:</strong>
+                <ul className="list-disc list-inside">
+                  {item.volume_ids.map((vol, i) => (
+                    <li key={i} className="text-gray-700">{vol}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+

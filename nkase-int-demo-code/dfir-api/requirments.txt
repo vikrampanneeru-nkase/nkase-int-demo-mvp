@@ -1,0 +1,5 @@
+### backend/requirements.txt
+fastapi
+uvicorn
+gunicorn
+python-dotenv

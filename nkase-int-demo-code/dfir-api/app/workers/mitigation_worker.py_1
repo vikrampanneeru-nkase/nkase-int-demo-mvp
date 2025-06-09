@@ -1,0 +1,13 @@
+# app/workers/mitigation_worker.py
+from arq import Worker
+from arq.connections import RedisSettings
+from app.services.ec2_ops import create_snapshot
+
+
+async def mitigation_worker(ctx, instance_id: str, job_id: str):
+    print(f"Starting mitigation worker for instance {instance_id} job {job_id}")
+    await create_snapshot(instance_id=instance_id, job_id=job_id)
+
+class WorkerSettings:
+    functions = [mitigation_worker]
+    redis_settings = RedisSettings(host="localhost", port=6379)

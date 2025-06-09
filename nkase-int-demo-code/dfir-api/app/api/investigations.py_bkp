@@ -1,0 +1,47 @@
+### backend/app/api/inventory.py
+from fastapi import APIRouter
+from pydantic import BaseModel
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.ec2_ops import list_instances, quarantine_instance,un_quarantine_instance, mitigate_instance
+from app.db.database import get_db
+from app.schemas.quarantine import ActionRequest
+from fastapi import Depends
+router = APIRouter()
+
+@router.get("")
+async def get_investigations(db: AsyncSession = Depends(get_db)):
+    print("Fetching investigations data...")
+    print("instance action")
+    return await list_instances(db)
+@router.get("/new")
+async def get_new_investigations(db: AsyncSession = Depends(get_db)):
+    return await list_instances(db)
+class ActionRequest(BaseModel):
+    instance_ids: List[str]
+
+
+
+@router.post("/quarantine")
+async def quarantine_instances(req: ActionRequest, db: AsyncSession = Depends(get_db)):
+    print(f"Quarantining instances: {req.instance_ids}")
+    status = await quarantine_instance(req.instance_ids, db)
+    print("values are ", status)
+    return status
+
+
+@router.post("/unquarantine")
+async def quarantine_instances(req: ActionRequest, db: AsyncSession = Depends(get_db)):
+    print(f"Quarantining instances: {req.instance_ids}")
+    status = await un_quarantine_instance(req.instance_ids, db)
+    print("values are ", status)
+    return status
+
+
+
+@router.post("/mitigate")
+async def mitigate_instances(req: ActionRequest, db: AsyncSession = Depends(get_db)):
+    print(f"Mitigating instances: {req.instance_ids}")
+    return await mitigate_instance(req.instance_ids, db)
+
+

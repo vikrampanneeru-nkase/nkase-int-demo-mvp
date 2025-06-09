@@ -1,0 +1,187 @@
+import boto3
+from botocore.exceptions import ClientError
+import uuid
+import time
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models.quarantine import QuarantinedInstance  # Removed or comment out if not used
+from datetime import datetime
+
+ROLE_ARN = "arn:aws:iam::339751003344:role/CrossAccountEC2Access"
+ROLE_SESSION_NAME = "DFIRSession"
+
+def get_cross_account_session():
+    sts = boto3.client('sts')
+    try:
+        response = sts.assume_role(
+            RoleArn=ROLE_ARN,
+            RoleSessionName=ROLE_SESSION_NAME
+        )
+    except ClientError as e:
+        print(f"Error assuming role: {e}")
+        raise e
+
+    credentials = response['Credentials']
+    session = boto3.Session(
+        aws_access_key_id=credentials['AccessKeyId'],
+        aws_secret_access_key=credentials['SecretAccessKey'],
+        aws_session_token=credentials['SessionToken']
+    )
+    return session
+
+def list_instances():
+    session = get_cross_account_session()
+    ec2 = session.client("ec2",region_name="us-east-1")
+
+
+    try:
+        response = ec2.describe_instances()
+    except ClientError as e:
+        print(f"Error describing instances: {e}")
+        raise e
+
+    instances = []
+    for reservation in response.get('Reservations', []):
+        for instance in reservation.get('Instances', []):
+            volume_ids = []
+            for block in instance.get('BlockDeviceMappings', []):
+                ebs = block.get('Ebs')
+                if ebs and 'VolumeId' in ebs:
+                    volume_ids.append(ebs['VolumeId'])
+            instance_data = {
+                "InstanceId": instance.get("InstanceId"),
+                "InstanceType": instance.get("InstanceType"),
+                "State": instance.get("State", {}).get("Name"),
+                "PublicIpAddress": instance.get("PublicIpAddress"),
+                "PrivateIpAddress": instance.get("PrivateIpAddress"),
+                "AvailabilityZone": instance.get("Placement", {}).get("AvailabilityZone"),
+                "Tags": instance.get("Tags", []),
+                "VolumeIds": volume_ids 
+            }
+            instances.append(instance_data)
+            print("instance are",instances)
+
+    return instances
+
+async def quarantine_instance(instance_ids: list, db: AsyncSession) -> list:
+    # Dummy implementation - replace with actual logic
+    results = []
+    for instance_id in instance_ids:
+        print(f"Quarantining instance {instance_id} ")
+        session = get_cross_account_session()
+        ec2 = session.client("ec2",region_name="us-east-1")
+        try:
+            vpcID = identifyInstanceVpcId(instance_id,ec2)
+            print("vpc id:-->",vpcID)
+            instanceAttributes = ec2.describe_instances(InstanceIds=[instance_id])
+            network_interface = instanceAttributes['Reservations'][0]['Instances'][0]['NetworkInterfaces'][0]
+            networkInterfaceID = network_interface['NetworkInterfaceId']
+            security_groups = network_interface['Groups']
+
+            #print("instanceAttributes----",instanceAttributes)
+            untrackSG,track = get_or_create_security_group(vpcID, 'tmp',ec2)
+            if track:
+                print("untrackSG--->",untrackSG)
+                untrackSecurityGroup(untrackSG,ec2)
+            print("untrackSG----->",untrackSG)
+            #creating a new security group for tracking
+            unique_id = str(uuid.uuid4())
+            trackSG,status = get_or_create_security_group(vpcID, unique_id,ec2)
+            print("trackSG is ",trackSG)
+            #revoking the outbound rules of the new security group to end the comunication with anything
+            revokeOutRules(0, trackSG['GroupId'],ec2)
+            print("untrackSG['GroupId']---",untrackSG['GroupId'])
+            #attaching the untrack security group on ec2 instance
+            ec2.modify_network_interface_attribute(NetworkInterfaceId=networkInterfaceID, Groups=[untrackSG['GroupId']])
+            time.sleep(60)
+            print("trackSG['GroupId']-----",trackSG['GroupId'])
+            #attaching the track security group with no inbound and outbound rules
+            ec2.modify_network_interface_attribute(NetworkInterfaceId=networkInterfaceID, Groups=[trackSG['GroupId']])
+            status = "Quarantained Success"
+            for sg in security_groups:
+                db.add(QuarantinedInstance(
+                account_id=session.client('sts').get_caller_identity().get('Account'),
+                instance_id=instance_id,
+                vpc_id=vpcID,
+                nic_id=networkInterfaceID,
+                existing_security_group=sg["GroupId"],
+                quarantine_security_group=trackSG['GroupId'],
+                ))
+            await db.commit()        
+        except ClientError as e:
+            error_message = e.response['Error']['Message']
+            error_code = e.response['Error']['Code']
+            print(f"[ERROR] Failed to quarantine instance {instance_id}: {error_code} - {error_message}")
+            status = f"Quarantine Failed: {error_code}"
+
+        results.append(f"status : {status}  for Instance id : {instance_id}")
+    return results
+
+def mitigate_instance(instance_id: str):
+    # Dummy implementation - replace with actual logic
+    print(f"Mitigating instance {instance_id} (dummy)")
+    return {"status": "mitigated", "instance_id": instance_id}
+def identifyInstanceVpcId(instanceId,ec2Client):
+    instanceReservations = ec2Client.describe_instances(InstanceIds=[instanceId])['Reservations']
+    for instanceReservation in instanceReservations:
+        instancesDescription = instanceReservation['Instances']
+        for instance in instancesDescription:
+            return instance['VpcId']
+        
+def createSecurityGroup(vpcID, string,ec2Client):
+    newSecurityGroup = ec2Client.create_security_group(
+        Description='Security Group created by Quarantince of Instance',
+        GroupName='ISOLATE SG NKASE-{}'.format(string),
+        VpcId=vpcID,)
+    print("newSecurityGroup is ",newSecurityGroup)
+    return newSecurityGroup
+def get_or_create_security_group(vpc_id, group_name, ec2):
+    try:
+        group_name_check = 'ISOLATE SG NKASE-{}'.format(group_name)
+        response = ec2.describe_security_groups(
+            Filters=[
+                {"Name": "group-name", "Values": [group_name_check]},
+                {"Name": "vpc-id", "Values": [vpc_id]}
+            ]
+        )
+        print("response is from create security group",response)
+        if response['SecurityGroups']:
+            print(f"Security Group '{group_name}' already exists. Reusing it.")
+            return response['SecurityGroups'][0],False
+        else:
+            return createSecurityGroup(vpc_id, group_name, ec2), True
+    except ClientError as e:
+        print("Error checking existing SG:", e)
+
+def untrackSecurityGroup(securityGroup,ec2Client):
+    ec2Client.authorize_security_group_ingress(
+        GroupId=securityGroup['GroupId'],
+        IpPermissions=[
+            {
+                'FromPort': -1,
+                'IpProtocol': '-1',
+                'IpRanges': [
+                    {
+                        'CidrIp': '0.0.0.0/0',
+                        'Description': 'untracked access',
+                    },
+                ],
+                'ToPort': -1,
+            },
+        ],
+    )
+def revokeOutRules(boolean, sgID,ec2Client):
+    if boolean == 0:
+        ec2Client.revoke_security_group_egress(
+            GroupId=sgID,
+            IpPermissions=[
+                {
+                    'IpProtocol': '-1',  # All protocols
+                    'IpRanges': [
+                        {
+                            'CidrIp': '0.0.0.0/0'
+                        }
+                    ]
+                }
+            ]
+        )
+
