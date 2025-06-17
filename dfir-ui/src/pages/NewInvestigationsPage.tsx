@@ -1,194 +1,280 @@
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import React, { useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import AddResourceModal from "../components/AddResourceModal";
 import { fetcher } from "../api/fetcher";
 import apiClient from "@/api/client";
-import { FaSpinner } from "react-icons/fa";
-import toast from "react-hot-toast";
-import { useNavigate } from "react-router-dom";
+import { ResourcesResponse, User } from "@/types";
 
-type EC2Instance = {
-  id: string;
-  name: string;
-  instance_type: string;
-  state: string;
-  availability_zone: string;
-  private_ip: string;
-  public_ip: string | null;
-  volume_ids: string[];
-  is_quarantined?: boolean;
+const tabs = [
+  { label: "Overview", key: "overview" },
+  { label: "Resources Under Investigation", key: "resources" },
+  { label: "Evidence", key: "evidence" },
+  { label: "Timeline", key: "timeline" },
+  { label: "Investigation Tasks", key: "tasks" },
+];
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr || dateStr === "N/A") return "N/A";
+  const date = new Date(dateStr);
+  return date.toLocaleString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 };
 
-const stateColors: Record<string, string> = {
-  running: "bg-green-100 text-green-800",
-  stopped: "bg-red-100 text-red-800",
-  pending: "bg-yellow-100 text-yellow-800",
-  terminated: "bg-gray-200 text-gray-600",
+const fetchCaseDetails = async (case_number: string) => {
+  return await fetcher(`investigations/${case_number}`);
 };
 
-export default function NewInvestigationsPage() {
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionResults, setActionResults] = useState<string[]>([]);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
+const fetchAllResourceTypes = async () => {
+  return await fetcher("investigations/resources/available");
+};
+
+const NewInvestigationsPage = () => {
+  const { case_number } = useParams<{ case_number?: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
-  const {
-    data = [],
-    isLoading,
-    error,
-    refetch,
-  } = useQuery<EC2Instance[]>({
-    queryKey: ["investigations_new"],
-    queryFn: async () => {
-      const raw = await fetcher("investigations/new");
-      return raw.map((item: any): EC2Instance => {
-        const nameTag = item.Tags?.find((tag: any) => tag.Key === "Name");
-        return {
-          id: item.InstanceId,
-          name: nameTag?.Value || "Unnamed",
-          instance_type: item.InstanceType,
-          state: item.State?.toLowerCase() ?? "unknown",
-          availability_zone: item.AvailabilityZone,
-          private_ip: item.PrivateIpAddress,
-          public_ip: item.PublicIpAddress || null,
-          volume_ids: item.VolumeIds || [],
-          is_quarantined: item.is_quarantined ?? false,
-        };
-      });
-    },
+  const [activeTab, setActiveTab] = useState("overview");
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [resourceData, setResourceData] = useState<ResourcesResponse | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["investigation", case_number],
+    queryFn: () => fetchCaseDetails(case_number!),
+    enabled: !!case_number,
   });
 
-  const handleAction = async (
-    instanceId: string,
-    action: "Quarantine" | "Un-Quarantine" | "Mitigate"
-  ) => {
-    setLoadingId(instanceId);
-    setActionMessage(null);
-    setActionResults([]);
+  const emptyCase = {
+    title: "New Investigation",
+    priority: "N/A",
+    status: "Draft",
+    assigned_to: "Unassigned",
+    description: "No case selected. Start a new investigation.",
+    created_at: null,
+    updated_at: null,
+  };
 
+  const defaultData = {
+    case: emptyCase,
+    tasks: [],
+    timeline: [],
+    resources: [],
+  };
+
+  const caseData = case_number ? data ?? defaultData : defaultData;
+  const { case: caseDetails, tasks, timeline, resources = [] } = caseData;
+  const { title, priority, status, assigned_to, description, created_at, updated_at } = caseDetails;
+
+  const handleAddResource = async () => {
+    const res = await fetchAllResourceTypes();
+    setResourceData(res);
+    setIsAddModalOpen(true);
+  };
+
+  const handleAddResourceSubmit = async (payload: {
+    instanceId: string;
+    title: string;
+    priority: string;
+    cloud: string;
+    resourceType: string;
+    status: string;
+    accountName: string;
+  }) => {
     try {
-      const response = await apiClient.post(`/investigations/${action}`, {
-        instance_ids: [instanceId],
-      });
+      const response = await apiClient.post<{
+        message: string;
+        case_number: string;
+        title: string;
+        status: string;
+      }>("/investigations/cases/create", payload);
 
-      const results = response.data as string[];
-      setActionResults(results);
+      const newCaseNumber = response.data.case_number;
+      await queryClient.invalidateQueries({ queryKey: ["investigation", newCaseNumber] });
 
-      const match = results[0]?.match(/job id: ([a-f0-9\-]+)/i);
-      const jobId = match?.[1];
+      console.log("✅ Case created or updated:", newCaseNumber);
 
-      toast.success(`${action} action complete.`);
-      await refetch();
-    } catch (err: any) {
-      const msg = `Error during ${action}: ${err.message}`;
-      setActionMessage(msg);
-      toast.error(msg);
-    } finally {
-      setLoadingId(null);
+      if (!case_number) {
+        navigate(`/cases/${newCaseNumber}`);
+      }
+    } catch (err) {
+      console.error("❌ Failed to create or update case:", err);
+    }
+  };
+
+  if (isLoading && case_number) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0f3d4d] to-[#2d2a80] text-white p-6">
+        Loading...
+      </div>
+    );
+  }
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "overview":
+        return <p>{description}</p>;
+      case "resources":
+        return (
+          <>
+            {resources.length ? (
+              <ul className="space-y-3">
+                {resources.map((res: any) => (
+                  <li key={res.id} className="border p-3 rounded bg-white text-black">
+                    <p className="font-semibold">{res.title}</p>
+                    <p className="text-sm">Type: {res.resourceType}</p>
+                    <p className="text-sm">Instance ID: {res.instanceId}</p>
+                    <p className="text-xs text-gray-500">Priority: {res.priority}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No resources linked yet.</p>
+            )}
+            <button
+              className="mt-4 bg-cyan-600 text-white px-4 py-2 rounded hover:bg-cyan-700"
+              onClick={handleAddResource}
+            >
+              ➕ Add Resource
+            </button>
+          </>
+        );
+      case "evidence":
+        return <p>No evidence uploaded yet.</p>;
+      case "timeline":
+        return timeline.length ? (
+          <ul className="list-disc pl-4">
+            {timeline.map((item: any, idx: number) => (
+              <li key={idx}>{JSON.stringify(item)}</li>
+            ))}
+          </ul>
+        ) : (
+          <p>No timeline data.</p>
+        );
+      case "tasks":
+        return tasks.length ? (
+          <ul className="space-y-3">
+            {tasks.map((task: any) => (
+              <li key={task.id} className="border p-3 rounded bg-white text-black">
+                <p className="font-semibold">{task.title}</p>
+                <p className="text-sm">{task.description}</p>
+                <p className="text-xs text-gray-500">
+                  Assigned to: {task.assigned_to} | Status: {task.status}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No tasks yet.</p>
+        );
+      default:
+        return null;
     }
   };
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-6">Investigations</h2>
+    <div className="min-h-screen bg-gradient-to-b from-[#0f3d4d] to-[#2d2a80] text-white px-6 py-6 text-sm">
+      <h1 className="text-2xl font-semibold mb-1">{title}</h1>
+      <p className="text-md text-gray-300 mb-3">Case #{case_number ?? "—"}</p>
 
-      {actionMessage && (
-        <div className="bg-red-100 text-red-800 px-4 py-2 rounded mb-4 border border-red-300">
-          {actionMessage}
-        </div>
-      )}
-      {actionResults.length > 0 && (
-        <div className="bg-green-100 text-green-800 px-4 py-2 rounded mb-4 border border-green-300">
-          {actionResults.map((line, i) => (
-            <div key={i}>{line.replace("status : ", "")}</div>
-          ))}
-        </div>
-      )}
+      <div className="flex gap-2 mb-6">
+        <span className="bg-red-600 text-white px-3 py-1 rounded-full text-xs">{priority}</span>
+        <span className="bg-cyan-600 text-white px-3 py-1 rounded-full text-xs">{status}</span>
+      </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {data.map((instance) => (
-          <InstanceCard
-            key={instance.id}
-            instance={instance}
-            loading={loadingId === instance.id}
-            onAction={handleAction}
-          />
+      {/* ✅ Action Buttons */}
+      <div className="flex justify-end gap-3 mb-6 flex-wrap">
+        <button
+          className="flex items-center gap-1 px-4 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-700 text-sm"
+          onClick={() => alert("Edit Case clicked")}
+        >
+          ✏️ Edit Case
+        </button>
+
+        <button
+          className="flex items-center gap-1 px-4 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-700 text-sm"
+          onClick={() => alert("Generate Report clicked")}
+        >
+          📄 Generate Report
+        </button>
+
+        <div className="relative group">
+          <button className="flex items-center gap-1 px-4 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-700 text-sm">
+            ⋯ Actions
+          </button>
+          <div className="absolute hidden group-hover:block top-full mt-1 right-0 bg-white shadow-md rounded z-10">
+            <ul className="text-sm text-black">
+              <li className="px-4 py-2 hover:bg-gray-100 cursor-pointer" onClick={() => alert("Download Evidence")}>Download Evidence</li>
+              <li className="px-4 py-2 hover:bg-gray-100 cursor-pointer" onClick={() => alert("Reassign Case")}>Reassign Case</li>
+              <li className="px-4 py-2 hover:bg-gray-100 cursor-pointer" onClick={() => alert("Archive Case")}>Archive Case</li>
+            </ul>
+          </div>
+        </div>
+
+        <button
+          className="flex items-center gap-1 px-4 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-700 text-sm"
+          onClick={() => alert("Communicate clicked")}
+        >
+          💬 Communicate
+        </button>
+
+        <button
+          className="flex items-center gap-1 px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700 text-sm"
+          onClick={() => alert("Isolate All Compromised Resources clicked")}
+        >
+          🔒 Isolate All Compromised Resources
+        </button>
+      </div>
+
+      {/* Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Assigned To</p>
+          <p className="font-medium">👤 {assigned_to}</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Created Date</p>
+          <p className="font-medium">📅 {formatDate(created_at)}</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Last Updated</p>
+          <p className="font-medium">⏱️ {formatDate(updated_at)}</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex flex-wrap gap-3 mb-4">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium ${
+              activeTab === tab.key ? "bg-purple-700 text-white shadow" : "bg-cyan-100 text-black"
+            }`}
+          >
+            {tab.label}
+          </button>
         ))}
       </div>
+
+      <div className="bg-cyan-100 text-black p-4 rounded-xl mb-8">{renderTabContent()}</div>
+
+      {resourceData && (
+        <AddResourceModal
+          isOpen={isAddModalOpen}
+          onClose={() => setIsAddModalOpen(false)}
+          resourceData={resourceData}
+          users={resourceData.Users as User[]}
+          onSubmit={handleAddResourceSubmit}
+        />
+      )}
     </div>
   );
-}
+};
 
-function InstanceCard({
-  instance,
-  loading,
-  onAction,
-}: {
-  instance: EC2Instance;
-  loading: boolean;
-  onAction: (id: string, action: "Quarantine" | "Un-Quarantine" | "Mitigate") => void;
-}) {
-  const stateClass = stateColors[instance.state] || "bg-gray-100 text-gray-700";
-
-  const options = instance.is_quarantined
-    ? ["Un-Quarantine", "Mitigate"]
-    : ["Quarantine", "Mitigate"];
-
-  return (
-    <div className="bg-white rounded-xl shadow p-5 border flex flex-col gap-2">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">{instance.name}</h3>
-        <span className={`text-xs px-2 py-1 rounded-full font-medium ${stateClass}`}>
-          {instance.state}
-        </span>
-      </div>
-
-      <div className="text-sm text-gray-700 space-y-1">
-        <div><strong>ID:</strong> {instance.id}</div>
-        <div><strong>Type:</strong> {instance.instance_type}</div>
-        <div><strong>AZ:</strong> {instance.availability_zone}</div>
-        <div><strong>Private IP:</strong> {instance.private_ip}</div>
-        <div><strong>Public IP:</strong> {instance.public_ip || "N/A"}</div>
-        <div><strong>Volumes:</strong>
-          <ul className="list-disc list-inside">
-            {instance.volume_ids.map((vol, idx) => (
-              <li key={idx}>{vol}</li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <strong>Quarantine:</strong>{" "}
-          <span className={instance.is_quarantined ? "text-red-600" : "text-green-600"}>
-            {instance.is_quarantined ? "Yes" : "No"}
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <select
-          className="w-full border px-3 py-2 rounded"
-          onChange={(e) =>
-            e.target.value &&
-            onAction(instance.id, e.target.value as "Quarantine" | "Un-Quarantine" | "Mitigate")
-          }
-          disabled={loading}
-          defaultValue=""
-        >
-          <option value="" disabled>
-            Select Action
-          </option>
-          {options.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
-        {loading && (
-          <div className="mt-2 flex items-center gap-2 text-sm text-blue-600">
-            <FaSpinner className="animate-spin" /> Processing...
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+export default NewInvestigationsPage;
 

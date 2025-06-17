@@ -1,0 +1,150 @@
+import { useState } from "react";
+import { Dialog } from "@headlessui/react";
+import { Resource, ResourceMap } from "../types";
+import { v4 as uuidv4 } from 'uuid';
+
+interface AddResourceModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  resourceData: ResourceMap;
+  onAdd: (resources: Resource[]) => void;
+}
+
+const cloudProviders = ["Amazon Web Services", "Microsoft Azure", "Google Cloud"];
+const resourceTypes = ["EC2 Instance / Virtual Mac", "S3 Bucket", "DynamoDB Table"];
+
+export default function AddResourceModal({
+  isOpen,
+  onClose,
+  resourceData,
+  onAdd,
+}: AddResourceModalProps) {
+  const [cloudProvider, setCloudProvider] = useState(cloudProviders[0]);
+  const [resourceType, setResourceType] = useState(resourceTypes[0]);
+  const [resourceId, setResourceId] = useState("");
+  const [resourceName, setResourceName] = useState("");
+
+  const handleSubmit = () => {
+    if (!resourceId || !resourceName) return;
+
+    const newResource: Resource = {
+id: uuidv4(),      
+name: resourceName,
+      awsRegion: "us-east-1", // TODO: optionally allow dynamic region selection
+      type: resourceType,
+      status: "Active",
+      compromised: false,
+      ip: "0.0.0.0",
+      contained: false,
+      resource_id: resourceId,
+      cloud_provider: cloudProvider,
+    };
+
+    onAdd([newResource]);
+    setResourceId("");
+    setResourceName("");
+    setCloudProvider(cloudProviders[0]);
+    setResourceType(resourceTypes[0]);
+    onClose();
+  };
+
+  return (
+    <Dialog open={isOpen} onClose={onClose} className="fixed z-10 inset-0 overflow-y-auto">
+      <div className="flex items-center justify-center min-h-screen px-4 bg-black/50">
+        <Dialog.Panel className="bg-cyan-300 text-black rounded-lg p-6 w-full max-w-md space-y-4 shadow-lg">
+          <Dialog.Title className="text-xl font-bold">
+            ➕ Add Resource to Investigation
+          </Dialog.Title>
+          <p className="text-sm text-gray-700">
+            Add a cloud resource to this investigation for analysis and forensic examination.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="cloud-provider" className="block text-sm font-semibold">
+                Cloud Provider
+              </label>
+              <select
+                id="cloud-provider"
+                className="w-full mt-1 rounded border px-2 py-1"
+                value={cloudProvider}
+                onChange={(e) => setCloudProvider(e.target.value)}
+              >
+                {cloudProviders.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {provider}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="resource-type" className="block text-sm font-semibold">
+                Resource Type
+              </label>
+              <select
+                id="resource-type"
+                className="w-full mt-1 rounded border px-2 py-1"
+                value={resourceType}
+                onChange={(e) => setResourceType(e.target.value)}
+              >
+                {resourceTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="resource-id" className="block text-sm font-semibold mt-2">
+              AWS Resource ID
+            </label>
+            <input
+              id="resource-id"
+              type="text"
+              className="w-full mt-1 rounded border px-2 py-1"
+              placeholder="e.g., i-1234567890abcdef0"
+              value={resourceId}
+              onChange={(e) => setResourceId(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="resource-name" className="block text-sm font-semibold mt-2">
+              Resource Name
+            </label>
+            <input
+              id="resource-name"
+              type="text"
+              className="w-full mt-1 rounded border px-2 py-1"
+              placeholder="e.g., Production Web Server"
+              value={resourceName}
+              onChange={(e) => setResourceName(e.target.value)}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 mt-4">
+            <button
+              className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className="px-3 py-1 rounded bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50"
+              onClick={handleSubmit}
+              disabled={!resourceId || !resourceName}
+              type="button"
+            >
+              Add Resource
+            </button>
+          </div>
+        </Dialog.Panel>
+      </div>
+    </Dialog>
+  );
+}
+

@@ -1,32 +1,52 @@
-import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { fetcher } from "../api/fetcher";
-import { Server, CircleCheck, CircleX, MapPin, Cpu, Database, FolderOpen } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Plus } from "lucide-react";
+const priorityColor = {
+    Critical: "bg-red-500 text-white",
+    High: "bg-green-400 text-white",
+    Medium: "bg-teal-300 text-white",
+    Low: "bg-yellow-400 text-white",
+};
+const statusColor = {
+    Open: "bg-teal-200 text-black",
+    "In Progress": "bg-teal-400 text-white",
+    Closed: "bg-gray-300 text-black",
+    Archived: "bg-purple-300 text-white",
+};
+const tabs = ["Open", "In Progress", "Closed", "Archived"];
 export default function Investigations() {
-    const [filter, setFilter] = useState("all");
-    const { data: ec2Data, isLoading: ec2Loading, error: ec2Error, } = useQuery({
+    const [filter, setFilter] = useState("All");
+    const [priorityFilter, setPriorityFilter] = useState("All");
+    const [search, setSearch] = useState("");
+    const navigate = useNavigate();
+    const { data, isLoading, error } = useQuery({
         queryKey: ["investigations"],
         queryFn: () => fetcher("investigations"),
     });
-    const { data: s3Data, isLoading: s3Loading, error: s3Error, } = useQuery({
-        queryKey: ["s3"],
-        queryFn: () => fetcher("investigations/s3"),
+    const investigations = data || [];
+    const filteredData = investigations.filter((item) => {
+        const matchesStatus = filter === "All" || item.status === filter;
+        const matchesPriority = priorityFilter === "All" || item.priority === priorityFilter;
+        const searchLower = search.toLowerCase();
+        const matchesSearch = item.title.toLowerCase().includes(searchLower) ||
+            item.case_number.toLowerCase().includes(searchLower);
+        return matchesStatus && matchesPriority && matchesSearch;
     });
-    const { data: dynamoData, isLoading: dynamoLoading, error: dynamoError, } = useQuery({
-        queryKey: ["dynamodb"],
-        queryFn: () => fetcher("investigations/dynamodb"),
-    });
-    const filteredEC2 = Array.isArray(ec2Data)
-        ? ec2Data.filter((instance) => filter === "all" ? true : instance.State === filter)
-        : [];
-    return (_jsxs("div", { className: "p-6 space-y-10", children: [_jsxs("section", { children: [_jsx("h2", { className: "text-2xl font-bold text-gray-800 mb-4", children: "EC2" }), _jsx("div", { className: "flex space-x-4 mb-6", children: ["all", "running", "stopped"].map((state) => (_jsx("button", { onClick: () => setFilter(state), className: `px-4 py-2 rounded-full text-sm font-medium border ${filter === state
-                                ? "bg-blue-600 text-white border-blue-600"
-                                : "bg-white text-gray-700 border-gray-300"}`, children: state.charAt(0).toUpperCase() + state.slice(1) }, state))) }), ec2Loading ? (_jsx("div", { className: "text-gray-600", children: "Loading EC2 instances..." })) : ec2Error ? (_jsx("div", { className: "text-red-600", children: "Error loading EC2 data." })) : filteredEC2.length === 0 ? (_jsx("div", { className: "text-gray-500", children: "No instances found." })) : (_jsx("div", { className: "grid md:grid-cols-2 gap-4", children: filteredEC2.map((instance, index) => {
-                            const nameTag = instance.Tags?.find((tag) => tag.Key === "Name")?.Value || "Unnamed";
-                            const isRunning = instance.State === "running";
-                            return (_jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl shadow-sm p-5", children: [_jsxs("div", { className: "flex justify-between items-center mb-2", children: [_jsxs("div", { className: "flex items-center space-x-2", children: [_jsx(Server, { className: "w-5 h-5 text-blue-500" }), _jsx("span", { className: "text-lg font-semibold text-gray-800", children: nameTag })] }), _jsx("div", { className: `flex items-center space-x-1 text-sm font-medium px-2 py-1 rounded-full ${isRunning
-                                                    ? "bg-green-100 text-green-800"
-                                                    : "bg-red-100 text-red-800"}`, children: isRunning ? (_jsxs(_Fragment, { children: [_jsx(CircleCheck, { className: "w-4 h-4" }), " ", _jsx("span", { children: "Running" })] })) : (_jsxs(_Fragment, { children: [_jsx(CircleX, { className: "w-4 h-4" }), " ", _jsx("span", { children: "Stopped" })] })) })] }), _jsxs("div", { className: "text-sm text-gray-600 space-y-1 mt-2", children: [_jsxs("div", { children: [_jsx("strong", { children: "Instance ID:" }), " ", instance.InstanceId] }), _jsxs("div", { className: "flex items-center", children: [_jsx(Cpu, { className: "w-4 h-4 mr-1 text-gray-500" }), _jsx("span", { children: instance.InstanceType })] }), _jsxs("div", { className: "flex items-center", children: [_jsx(MapPin, { className: "w-4 h-4 mr-1 text-purple-500" }), _jsx("span", { children: instance.AvailabilityZone })] }), _jsxs("div", { children: [_jsx("strong", { children: "Private IP:" }), " ", instance.PrivateIpAddress] }), _jsxs("div", { children: [_jsx("strong", { children: "Public IP:" }), " ", instance.PublicIpAddress || "N/A"] }), _jsxs("div", { className: "flex items-start mt-1 gap-4", children: [_jsxs("div", { children: [_jsx("strong", { children: "Volumes:" }), _jsx("ul", { className: "list-disc list-inside text-sm ml-2", children: instance.VolumeIds?.map((volId) => (_jsx("li", { children: volId }, volId))) || _jsx("li", { children: "None" }) })] }), _jsxs("div", { children: [_jsx("strong", { children: "Security Groups:" }), _jsx("ul", { className: "list-disc list-inside ml-2", children: instance.SecurityGroups.map((sg) => (_jsxs("li", { children: [_jsx("code", { children: sg.GroupName }), " (", sg.GroupId, ")"] }, sg.GroupId))) })] })] })] })] }, index));
-                        }) }))] }), _jsxs("section", { children: [_jsx("h2", { className: "text-2xl font-bold text-gray-800 mb-4", children: "S3 Buckets" }), s3Loading ? (_jsx("div", { className: "text-gray-600", children: "Loading S3 buckets..." })) : s3Error ? (_jsx("div", { className: "text-red-600", children: "Error loading S3 buckets." })) : (_jsx("div", { className: "grid md:grid-cols-2 gap-4", children: s3Data?.map((bucket) => (_jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl shadow-sm p-5", children: [_jsxs("div", { className: "flex items-center space-x-2 mb-2", children: [_jsx(FolderOpen, { className: "w-5 h-5 text-yellow-500" }), _jsx("span", { className: "text-lg font-semibold text-gray-800", children: bucket.Name })] }), _jsxs("div", { className: "text-sm text-gray-600", children: [_jsxs("div", { children: [_jsx("strong", { children: "Region:" }), " ", bucket.Region || "N/A"] }), _jsxs("div", { children: [_jsx("strong", { children: "Created:" }), " ", bucket.CreationDate] })] })] }, bucket.Name))) }))] }), _jsxs("section", { children: [_jsx("h2", { className: "text-2xl font-bold text-gray-800 mb-4", children: "DynamoDB Tables" }), dynamoLoading ? (_jsx("div", { className: "text-gray-600", children: "Loading DynamoDB tables..." })) : dynamoError ? (_jsx("div", { className: "text-red-600", children: "Error loading DynamoDB data." })) : (_jsx("div", { className: "grid md:grid-cols-2 gap-4", children: dynamoData?.map((table) => (_jsxs("div", { className: "bg-white border border-gray-200 rounded-2xl shadow-sm p-5", children: [_jsxs("div", { className: "flex items-center space-x-2 mb-2", children: [_jsx(Database, { className: "w-5 h-5 text-green-600" }), _jsx("span", { className: "text-lg font-semibold text-gray-800", children: table.TableName })] }), _jsxs("div", { className: "text-sm text-gray-600 space-y-1", children: [_jsxs("div", { children: [_jsx("strong", { children: "Item Count:" }), " ", table.ItemCount] }), _jsxs("div", { children: [_jsx("strong", { children: "Read Capacity:" }), " ", table.ProvisionedThroughput?.ReadCapacityUnits] }), _jsxs("div", { children: [_jsx("strong", { children: "Write Capacity:" }), " ", table.ProvisionedThroughput?.WriteCapacityUnits] }), _jsxs("div", { children: [_jsx("strong", { children: "Status:" }), " ", table.TableStatus] })] })] }, table.TableName))) }))] })] }));
+    const getLatestCaseNumber = () => {
+        if (investigations.length === 0)
+            return "";
+        const sorted = [...investigations].sort((a, b) => b.case_number.localeCompare(a.case_number));
+        return sorted[0].case_number;
+    };
+    return (_jsxs("div", { className: "p-6", children: [_jsxs("div", { className: "mb-4", children: [_jsx("h1", { className: "text-3xl font-bold text-gray-800", children: "Investigations" }), _jsx("p", { className: "text-sm text-gray-500", children: "Manage and track all digital forensic investigations" })] }), _jsx("div", { className: "flex justify-end mb-4", children: _jsxs("button", { onClick: () => {
+                        const latest = getLatestCaseNumber();
+                        navigate(`/newinvestigations/${latest}`);
+                    }, className: "bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center space-x-2", children: [_jsx(Plus, { className: "w-4 h-4" }), _jsx("span", { children: "New Investigation" })] }) }), _jsxs("div", { className: "bg-cyan-50 rounded-xl p-4 shadow space-y-4", children: [_jsxs("div", { className: "flex space-x-4", children: [_jsx("button", { onClick: () => setFilter("All"), className: `px-4 py-2 rounded-full text-sm font-medium ${filter === "All"
+                                    ? "bg-purple-700 text-white"
+                                    : "bg-white text-gray-800 border border-gray-300"}`, children: "All Investigations" }), tabs.map((tab) => (_jsx("button", { onClick: () => setFilter(tab), className: `px-4 py-2 rounded-full text-sm font-medium ${filter === tab
+                                    ? "bg-purple-700 text-white"
+                                    : "bg-white text-gray-800 border border-gray-300"}`, children: tab }, tab)))] }), _jsxs("div", { className: "flex justify-between items-center gap-4", children: [_jsx("input", { type: "text", placeholder: "\uD83D\uDD0D Search investigations...", className: "px-4 py-2 border border-gray-300 rounded-lg flex-1 max-w-md", value: search, onChange: (e) => setSearch(e.target.value) }), _jsxs("select", { value: priorityFilter, onChange: (e) => setPriorityFilter(e.target.value), className: "px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700", children: [_jsx("option", { value: "All", children: "All Priorities" }), _jsx("option", { value: "Critical", children: "Critical" }), _jsx("option", { value: "High", children: "High" }), _jsx("option", { value: "Medium", children: "Medium" }), _jsx("option", { value: "Low", children: "Low" })] })] }), isLoading ? (_jsx("div", { className: "text-gray-500", children: "Loading investigations..." })) : error ? (_jsx("div", { className: "text-red-600", children: "Error loading data" })) : filteredData.length === 0 ? (_jsx("div", { className: "text-gray-500", children: "No investigations found" })) : (_jsx("div", { className: "overflow-x-auto", children: _jsxs("table", { className: "min-w-full text-sm text-left", children: [_jsx("thead", { children: _jsxs("tr", { className: "text-gray-600 border-b", children: [_jsx("th", { className: "py-2 px-3", children: "Case Number" }), _jsx("th", { className: "py-2 px-3", children: "Title" }), _jsx("th", { className: "py-2 px-3", children: "Priority" }), _jsx("th", { className: "py-2 px-3", children: "Status" }), _jsx("th", { className: "py-2 px-3", children: "Assigned To" }), _jsx("th", { className: "py-2 px-2", children: "Created" }), _jsx("th", { className: "py-2 px-3", children: "Last Updated" })] }) }), _jsx("tbody", { children: filteredData.map((item, index) => (_jsxs("tr", { onClick: () => navigate(`/newinvestigations/${item.case_number}`), className: `border-b cursor-pointer hover:bg-cyan-100 ${item.priority === "Critical" ? "bg-red-50" : "bg-white"}`, children: [_jsx("td", { className: "py-2 px-3 font-medium text-gray-800", children: item.case_number }), _jsx("td", { className: "py-2 px-3 text-blue-800 underline", children: item.title }), _jsx("td", { className: "py-2 px-3", children: _jsx("span", { className: `px-3 py-1 text-xs rounded-full font-semibold ${priorityColor[item.priority]}`, children: item.priority }) }), _jsx("td", { className: "py-2 px-3", children: _jsx("span", { className: `px-3 py-1 text-xs rounded-full font-semibold ${statusColor[item.status]}`, children: item.status }) }), _jsx("td", { className: "py-2 px-3 font-medium text-gray-800", children: item.assigned_to }), _jsx("td", { className: "py-2 px-2 font-medium text-gray-800", children: new Date(item.created_at).toLocaleString() }), _jsx("td", { className: "py-2 px-3 font-medium text-gray-800", children: new Date(item.updated_at).toLocaleString() })] }, index))) })] }) }))] })] }));
 }

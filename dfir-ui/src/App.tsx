@@ -35,6 +35,8 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/investigations" element={<Investigations />} />
             <Route path="/newinvestigations" element={<NewInvestigationsPage />} />
+<Route path="/newinvestigations" element={<NewInvestigationsPage />} />
+<Route path="/newinvestigations/:case_number" element={<NewInvestigationsPage />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/tools" element={<Tools />} />
             <Route path="/standards" element={<Standards />} />
@@ -49,4 +51,3 @@ function App() {
 }
 
 export default App;
-

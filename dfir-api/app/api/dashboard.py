@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.activity_log import ActivityLog
 from app.schemas.activity_log import ActivityLogResponse
-from app.schemas.mitigation_log import MitigationJobOut
+#from app.schemas.mitigation_log import MitigationJobOut
 from app.models.mitigation_job import MitigationJob
 from typing import List
 from datetime import datetime
 from app.db.database import get_db
 from sqlalchemy.future import select
+
+from sqlalchemy import select, func
 router = APIRouter()
 
 @router.get("", response_model=List[ActivityLogResponse])
@@ -38,3 +40,16 @@ async def get_mitigated_jobs(db: AsyncSession = Depends(get_db)):
         simplified_jobs.append(job_dict)
 
     return simplified_jobs
+
+
+#http://ec2-54-196-221-208.compute-1.amazonaws.com/api/dashboard/mitigations/in-progress/count
+@router.get("/mitigations/in-progress/count")
+async def get_not_completed_count(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+    select(MitigationJob.job_id).where(MitigationJob.stage != "completed"))
+    job_ids = [row[0] for row in result.all()]
+
+    return {
+    "in_progress_count": len(job_ids),
+    "job_ids": job_ids
+    }

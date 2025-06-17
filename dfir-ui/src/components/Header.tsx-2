@@ -1,0 +1,108 @@
+import { Bell, User } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+//import { fetcher } from '/src/api/fetcher';
+import { fetcher } from "@/api/fetcher";
+export default function Header() {
+  const [showModal, setShowModal] = useState(false);
+  const [modalData, setModalData] = useState<any[]>([]);
+
+  // Fetch the count from your API
+  const { data: inProgressCount = 0, isLoading: isLoadingCount, error: inProgressError } = useQuery<number>({
+    queryKey: ["in-progress-count"],
+    queryFn: async () => {
+      const res = await fetcher("dashboard/mitigations/in-progress/count"); // This will use the base URL from .env
+      return res.in_progress_count;
+    },
+    refetchInterval: 120000, // poll every 2 minutes
+  });
+
+  // Error handling
+  if (inProgressError) {
+    console.error("Error fetching in-progress count:", inProgressError);
+    return <div>Error fetching count</div>; // Error UI
+  }
+
+  // Loading state
+  if (isLoadingCount) {
+    return <div>Loading...</div>; // Loading UI
+  }
+
+  const handleNotificationClick = async () => {
+    try {
+      const jobIds = await fetcher("investigations/mitigation/in-progress"); // Correct URL form
+      const details: any[] = await Promise.all(
+        jobIds.map((id: string) =>
+          fetcher(`investigations/mitigation/status/${id}`) // Correct URL form
+        )
+      );
+      setModalData(details);
+      setShowModal(true);
+    } catch (error) {
+      console.error("Failed to load job details", error);
+    }
+  };
+
+  return (
+    <>
+      <header className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-cyan-700 to-purple-900 text-white shadow-md">
+        <h2 className="text-lg font-semibold">Home</h2>
+
+        <div className="flex items-center gap-4">
+          <input
+            className="rounded-lg px-3 py-1 text-sm text-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            type="text"
+            placeholder="Search..."
+          />
+
+          <div className="relative">
+            <Bell
+              className="w-5 h-5 cursor-pointer hover:text-cyan-300 transition"
+              onClick={handleNotificationClick}
+            />
+            {inProgressCount > 0 && (
+              <span className="absolute -top-2 -right-2 text-[10px] bg-red-600 text-white rounded-full px-1.5 py-0.5 leading-none">
+                {inProgressCount}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <User className="w-6 h-6" />
+            <span className="text-sm font-medium">NKASE_DEMO_TARGET</span>
+          </div>
+        </div>
+      </header>
+
+      {/* Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full shadow-lg">
+            <h3 className="text-lg font-semibold mb-4 text-gray-800">
+              In-Progress Snapshots
+            </h3>
+            <div className="space-y-4 max-h-[400px] overflow-y-auto">
+              {modalData.map((job) => (
+                <div
+                  key={job.job_id}
+                  className="bg-gray-100 p-4 rounded text-sm font-mono text-gray-800"
+                >
+                  <pre>{JSON.stringify(job, null, 2)}</pre>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-4">
+              <button
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded"
+                onClick={() => setShowModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+

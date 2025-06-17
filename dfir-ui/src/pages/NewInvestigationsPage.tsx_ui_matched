@@ -1,0 +1,127 @@
+import React, { useState } from "react";
+
+const tabs = [
+  { label: "Overview", key: "overview" },
+  { label: "Resources Under Investigation", key: "resources" },
+  { label: "Evidence", key: "evidence" },
+  { label: "Timeline", key: "timeline" },
+  { label: "Investigation Tasks", key: "tasks" },
+];
+
+const NewInvestigationsPage = () => {
+  const [activeTab, setActiveTab] = useState("overview");
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "overview":
+        return (
+          <p>
+            <strong>Case Description:</strong> Investigation of unauthorized access
+            to web servers detected on May 1, 2025. Initial indicators suggest a
+            potential breach via vulnerable web application.
+          </p>
+        );
+      case "resources":
+        return (
+          <ul className="list-disc pl-4 space-y-1">
+            <li>
+              EC2 Instance: <code>`i-0a12bc34def567890`</code> (status: compromised)
+            </li>
+            <li>
+              S3 Bucket: <code>`sensitive-logs-prod`</code> (access logs exposed)
+            </li>
+          </ul>
+        );
+      case "evidence":
+        return <p>No evidence uploaded yet.</p>;
+      case "timeline":
+        return <p>No investigation steps recorded yet.</p>;
+      case "tasks":
+        return <p>No investigation tasks assigned yet.</p>;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0f3d4d] to-[#2d2a80] text-white px-6 py-6 text-sm">
+      <button className="text-sm text-blue-200 hover:underline mb-4">
+        ← Back to investigations
+      </button>
+
+      <h1 className="text-2xl font-semibold mb-1">
+        Network Intrusion Investigation
+      </h1>
+      <p className="text-md text-gray-300 mb-3">Case #JohnD123</p>
+
+      <div className="flex gap-2 mb-6">
+        <span className="bg-red-600 text-white px-3 py-1 rounded-full text-xs">
+          Critical
+        </span>
+        <span className="bg-cyan-600 text-white px-3 py-1 rounded-full text-xs">
+          In Progress
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-cyan-100 text-black p-4 rounded-xl flex flex-col justify-center">
+          <p className="text-xs text-gray-500">Assigned To</p>
+          <p className="font-medium">👤 Sarah Chen</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl flex flex-col justify-center">
+          <p className="text-xs text-gray-500">Category</p>
+          <p className="font-medium">🔐 Network Security</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl flex flex-col justify-center">
+          <p className="text-xs text-gray-500">Created Date</p>
+          <p className="font-medium">📅 5/1/2025</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl flex flex-col justify-center">
+          <p className="text-xs text-gray-500">Last Updated</p>
+          <p className="font-medium">⏱️ 5/4/2025</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3 mb-6">
+        <button className="bg-cyan-500 hover:bg-cyan-600 text-white px-4 py-2 rounded-lg">
+          Edit Case
+        </button>
+        <button className="bg-cyan-500 hover:bg-cyan-600 text-white px-4 py-2 rounded-lg">
+          Generate Report
+        </button>
+        <button className="bg-cyan-500 hover:bg-cyan-600 text-white px-4 py-2 rounded-lg">
+          Actions
+        </button>
+        <button className="bg-cyan-500 hover:bg-cyan-600 text-white px-4 py-2 rounded-lg">
+          Communicate
+        </button>
+        <button className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg">
+          🔒 Isolate All Compromised Resources
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-3 mb-6">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium ${
+              activeTab === tab.key
+                ? "bg-purple-700 text-white shadow"
+                : "bg-cyan-100 text-black"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-cyan-100 text-black p-4 rounded-xl mb-8">
+        {renderTabContent()}
+      </div>
+    </div>
+  );
+};
+
+export default NewInvestigationsPage;
+

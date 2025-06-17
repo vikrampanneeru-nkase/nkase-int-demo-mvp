@@ -1,6 +1,8 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetcher } from "@/api/fetcher";
+import { useState } from "react";
 const stageColor = {
     completed: "text-green-600",
     failed: "text-red-600",
@@ -16,16 +18,24 @@ export default function MitigationTab() {
         queryKey: ["mitigation"],
         queryFn: () => fetcher("dashboard/mitigated"),
     });
+    const [selectedJobDetail, setSelectedJobDetail] = useState(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [expandedRow, setExpandedRow] = useState(null);
     const handleJobClick = async (jobId) => {
         try {
             const jobDetail = await fetcher(`investigations/mitigation/status/${jobId}`);
-            console.log("Job details:", jobDetail);
-            alert(`Fetched job ${jobId}:\n${JSON.stringify(jobDetail, null, 2)}`);
+            setSelectedJobDetail(jobDetail);
+            setIsModalOpen(true);
         }
         catch (err) {
             console.error("Failed to fetch job details", err);
             alert("Failed to fetch job details");
         }
+    };
+    const closeModal = () => {
+        setIsModalOpen(false);
+        setSelectedJobDetail(null);
+        setExpandedRow(null);
     };
     if (isLoading)
         return _jsx("p", { className: "text-gray-700", children: "Loading mitigation data..." });
@@ -33,5 +43,16 @@ export default function MitigationTab() {
         return _jsx("p", { className: "text-red-600", children: "Error loading mitigation data" });
     if (!data || data.length === 0)
         return _jsx("p", { children: "No mitigation jobs found." });
-    return (_jsx("div", { className: "space-y-6 font-sans p-4 max-w-5xl mx-auto", children: data.map((job) => (_jsxs("div", { className: "p-6 bg-white rounded-xl shadow-md border border-gray-200", children: [_jsxs("div", { className: "flex justify-between items-center mb-4", children: [_jsxs("div", { children: [_jsxs("p", { className: "text-sm text-gray-500", children: ["Job ID:", " ", _jsx("button", { onClick: () => handleJobClick(job.job_id), className: "text-blue-600 hover:underline", children: job.job_id })] }), _jsxs("p", { className: "text-lg font-semibold text-gray-800", children: ["Instance ID: ", job.instance_id] }), _jsxs("p", { className: `text-md mt-1 ${stageColor[job.stage] || "text-gray-600"}`, children: ["Stage: ", job.stage] }), job.error_message && (_jsxs("p", { className: "text-red-500 text-sm mt-1", children: ["Error: ", job.error_message] }))] }), _jsx("div", { className: "w-1/3", children: _jsx("div", { className: "h-2 rounded bg-gray-200", children: _jsx("div", { className: "h-2 rounded bg-blue-500", style: { width: `${getStageProgress(job.stage)}%` } }) }) })] }), _jsxs("div", { className: "text-sm text-gray-500 space-y-1", children: [_jsxs("p", { children: ["Started: ", new Date(job.created_at).toLocaleString()] }), _jsxs("p", { children: ["Updated: ", new Date(job.updated_at).toLocaleString()] })] })] }, job.job_id))) }));
+    return (_jsxs("div", { className: "space-y-6 font-sans p-4 max-w-5xl mx-auto", children: [data.map((job) => (_jsxs("div", { className: "p-6 bg-white rounded-xl shadow-md border border-gray-200", children: [_jsxs("div", { className: "flex justify-between items-center mb-4", children: [_jsxs("div", { children: [_jsxs("p", { className: "text-sm text-gray-500", children: ["Job ID:", " ", _jsx("button", { onClick: () => handleJobClick(job.job_id), className: "text-blue-600 hover:underline", children: job.job_id })] }), _jsxs("p", { className: "text-lg font-semibold text-gray-800", children: ["Instance ID: ", job.instance_id] }), _jsxs("p", { className: `text-md mt-1 ${stageColor[job.stage] || "text-gray-600"}`, children: ["Stage: ", job.stage] }), job.error_message && (_jsxs("p", { className: "text-red-500 text-sm mt-1", children: ["Error: ", job.error_message] }))] }), _jsx("div", { className: "w-1/3", children: _jsx("div", { className: "h-2 rounded bg-gray-200", children: _jsx("div", { className: "h-2 rounded bg-blue-500", style: { width: `${getStageProgress(job.stage)}%` } }) }) })] }), _jsxs("div", { className: "text-sm text-gray-500 space-y-1", children: [_jsxs("p", { children: ["Started: ", new Date(job.created_at).toLocaleString()] }), _jsxs("p", { children: ["Updated: ", new Date(job.updated_at).toLocaleString()] })] })] }, job.job_id))), isModalOpen && selectedJobDetail && (_jsx("div", { className: "fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50", children: _jsxs("div", { className: "bg-white rounded-xl shadow-lg p-6 max-w-6xl w-full", children: [_jsxs("h2", { className: "text-lg font-bold mb-4", children: ["Job Status: ", selectedJobDetail[0]?.job_id] }), _jsx("div", { className: "overflow-auto max-h-[60vh] max-w-full", children: _jsx("div", { className: "min-w-[1000px]", children: _jsxs("table", { className: "table-auto w-full text-sm border border-gray-300 text-gray-800 bg-white", children: [_jsx("thead", { className: "bg-gray-100 sticky top-0 z-10 text-gray-900", children: _jsxs("tr", { children: [_jsx("th", { className: "p-2 border border-gray-200", children: "ID" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Instance ID" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Volume ID" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Snapshot ID" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Action" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Status" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Progress" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Timestamp" }), _jsx("th", { className: "p-2 border border-gray-200", children: "Details" })] }) }), _jsx("tbody", { children: selectedJobDetail.map((item, index) => {
+                                                const isExpanded = expandedRow === index;
+                                                const isCompleted = item.status === "completed";
+                                                const isFailed = item.status === "failed";
+                                                return (_jsxs(React.Fragment, { children: [_jsxs("tr", { onClick: () => setExpandedRow(isExpanded ? null : index), className: `cursor-pointer align-top ${isCompleted
+                                                                ? "bg-green-50"
+                                                                : isFailed
+                                                                    ? "bg-red-50"
+                                                                    : index % 2 === 0
+                                                                        ? "bg-gray-50"
+                                                                        : "bg-white"} hover:bg-blue-50`, children: [_jsx("td", { className: "p-2 border border-gray-200", children: item.id }), _jsx("td", { className: "p-2 border border-gray-200", children: item.instance_id }), _jsx("td", { className: "p-2 border border-gray-200", children: item.volume_id || "-" }), _jsx("td", { className: "p-2 border border-gray-200", children: item.snapshot_id || "-" }), _jsx("td", { className: "p-2 border border-gray-200", children: item.action }), _jsx("td", { className: "p-2 border border-gray-200", children: item.status }), _jsx("td", { className: "p-2 border border-gray-200", children: item.progress ?? "-" }), _jsx("td", { className: "p-2 border border-gray-200", children: item.timestamp }), _jsx("td", { className: "p-2 border border-gray-200 text-blue-600 text-xs", children: isExpanded ? "▲ Hide" : "▼ Show" })] }), isExpanded && (_jsx("tr", { children: _jsx("td", { colSpan: 9, className: "p-3 border border-gray-200 bg-gray-100 text-xs", children: _jsx("pre", { className: "whitespace-pre-wrap font-mono text-gray-800", children: JSON.stringify(item.details, null, 2) }) }) }))] }, item.id));
+                                            }) })] }) }) }), _jsx("div", { className: "text-right mt-4", children: _jsx("button", { onClick: closeModal, className: "bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded", children: "Close" }) })] }) }))] }));
 }

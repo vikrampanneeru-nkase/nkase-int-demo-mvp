@@ -1,6 +1,7 @@
 // src/components/SidebarItem.tsx
 import React from "react";
-import { NavLink } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import clsx from "clsx";
 
 interface SidebarItemProps {
   icon: React.ReactNode;
@@ -9,19 +10,24 @@ interface SidebarItemProps {
 }
 
 export default function SidebarItem({ icon, label, to }: SidebarItemProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const isActive = location.pathname === to;
+
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `flex items-center gap-3 px-4 py-2 rounded-lg text-sm transition font-medium ${
-          isActive
-            ? "bg-white/20 text-white"
-            : "text-white/80 hover:bg-white/10 hover:text-white"
-        }`
-      }
+    <div
+      className={clsx(
+        "flex items-center gap-3 px-4 py-2 rounded-xl text-sm cursor-pointer transition",
+        isActive
+          ? "bg-sidebar-active text-white font-medium"
+          : "text-white/80 hover:bg-sidebar-hover hover:text-white"
+      )}
+      onClick={() => navigate(to)}
     >
       <div className="w-5 h-5">{icon}</div>
       <span className="truncate">{label}</span>
-    </NavLink>
+    </div>
   );
 }
+

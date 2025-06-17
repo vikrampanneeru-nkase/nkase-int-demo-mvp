@@ -1,0 +1,236 @@
+import React, { useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import AddResourceModal from "../components/AddResourceModal";
+import { fetcher } from "../api/fetcher";
+import apiClient from "@/api/client";
+import { ResourcesResponse } from "@/types"; 
+import { User } from "@/types"; // or relative path to your types file
+
+const tabs = [
+  { label: "Overview", key: "overview" },
+  { label: "Resources", key: "resources" },
+  { label: "Evidence", key: "evidence" },
+  { label: "Timeline", key: "timeline" },
+  { label: "Tasks", key: "tasks" },
+];
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr || dateStr === "N/A") return "N/A";
+  const date = new Date(dateStr);
+  return date.toLocaleString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const fetchCaseDetails = async (case_number: string) => {
+  return await fetcher(`investigations/${case_number}`);
+};
+
+const fetchAllResourceTypes = async () => {
+  return await fetcher("investigations/resources/available");
+};
+
+const NewInvestigationsPage = () => {
+  const { case_number } = useParams<{ case_number?: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const [activeTab, setActiveTab] = useState("overview");
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [resourceData, setResourceData] = useState<ResourcesResponse | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["investigation", case_number],
+    queryFn: () => fetchCaseDetails(case_number!),
+    enabled: !!case_number,
+  });
+
+  const emptyCase = {
+    title: "New Investigation",
+    priority: "N/A",
+    status: "Draft",
+    assigned_to: "Unassigned",
+    description: "No case selected. Start a new investigation.",
+    created_at: null,
+    updated_at: null,
+  };
+
+  const defaultData = {
+    case: emptyCase,
+    tasks: [],
+    timeline: [],
+    resources: [],
+  };
+
+  const caseData = case_number ? data ?? defaultData : defaultData;
+  const { case: caseDetails, tasks, timeline, resources = [] } = caseData;
+  const { title, priority, status, assigned_to, description, created_at, updated_at } = caseDetails;
+
+  const handleAddResource = async () => {
+    const res = await fetchAllResourceTypes();
+    setResourceData(res);
+    setIsAddModalOpen(true);
+  };
+
+  const handleAddResourceSubmit = async (payload: {
+    instanceId: string;
+    title: string;
+    priority: string;
+    cloud: string;
+    resourceType: string;
+    status: string;
+accountName: string;
+  }) => {
+    try {
+      const response = await apiClient.post<{
+        message: string;
+        case_number: string;
+        title: string;
+        status: string;
+      }>("/investigations/cases/create", payload);
+
+      const newCaseNumber = response.data.case_number;
+
+      await queryClient.invalidateQueries({ queryKey: ["investigation", newCaseNumber] });
+
+      console.log("✅ Case created or updated:", newCaseNumber);
+
+      if (!case_number) {
+        navigate(`/cases/${newCaseNumber}`);
+      }
+    } catch (err) {
+      console.error("❌ Failed to create or update case:", err);
+    }
+  };
+
+  if (isLoading && case_number) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0f3d4d] to-[#2d2a80] text-white p-6">
+        Loading...
+      </div>
+    );
+  }
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "overview":
+        return <p>{description}</p>;
+      case "resources":
+        return (
+          <>
+            {resources.length ? (
+              <ul className="space-y-3">
+                {resources.map((res: any) => (
+                  <li key={res.id} className="border p-3 rounded bg-white text-black">
+                    <p className="font-semibold">{res.title}</p>
+                    <p className="text-sm">Type: {res.resourceType}</p>
+                    <p className="text-sm">Instance ID: {res.instanceId}</p>
+                    <p className="text-xs text-gray-500">Priority: {res.priority}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No resources linked yet.</p>
+            )}
+            <button
+              className="mt-4 bg-cyan-600 text-white px-4 py-2 rounded hover:bg-cyan-700"
+              onClick={handleAddResource}
+            >
+              ➕ Add Resource
+            </button>
+          </>
+        );
+      case "evidence":
+        return <p>No evidence uploaded yet.</p>;
+      case "timeline":
+        return timeline.length ? (
+          <ul className="list-disc pl-4">
+            {timeline.map((item: any, idx: number) => (
+              <li key={idx}>{JSON.stringify(item)}</li>
+            ))}
+          </ul>
+        ) : (
+          <p>No timeline data.</p>
+        );
+      case "tasks":
+        return tasks.length ? (
+          <ul className="space-y-3">
+            {tasks.map((task: any) => (
+              <li key={task.id} className="border p-3 rounded bg-white text-black">
+                <p className="font-semibold">{task.title}</p>
+                <p className="text-sm">{task.description}</p>
+                <p className="text-xs text-gray-500">
+                  Assigned to: {task.assigned_to} | Status: {task.status}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No tasks yet.</p>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0f3d4d] to-[#2d2a80] text-white px-6 py-6 text-sm">
+      <h1 className="text-2xl font-semibold mb-1">{title}</h1>
+      <p className="text-md text-gray-300 mb-3">Case #{case_number ?? "—"}</p>
+
+      <div className="flex gap-2 mb-6">
+        <span className="bg-red-600 text-white px-3 py-1 rounded-full text-xs">{priority}</span>
+        <span className="bg-cyan-600 text-white px-3 py-1 rounded-full text-xs">{status}</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Assigned To</p>
+          <p className="font-medium">👤 {assigned_to}</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Created Date</p>
+          <p className="font-medium">📅 {formatDate(created_at)}</p>
+        </div>
+        <div className="bg-cyan-100 text-black p-4 rounded-xl">
+          <p className="text-xs text-gray-500">Last Updated</p>
+          <p className="font-medium">⏱️ {formatDate(updated_at)}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3 mb-4">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium ${
+              activeTab === tab.key ? "bg-purple-700 text-white shadow" : "bg-cyan-100 text-black"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-cyan-100 text-black p-4 rounded-xl mb-8">{renderTabContent()}</div>
+
+      {resourceData && (
+        <AddResourceModal
+          isOpen={isAddModalOpen}
+          onClose={() => setIsAddModalOpen(false)}
+          resourceData={resourceData}
+          users={resourceData.Users as User[]}
+          onSubmit={handleAddResourceSubmit}
+        />
+      )}
+    </div>
+  );
+};
+
+export default NewInvestigationsPage;
+

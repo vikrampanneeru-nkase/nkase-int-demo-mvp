@@ -1,0 +1,3 @@
+nohup: ignoring input
+10:39:03: Starting worker for 1 functions: mitigation_worker
+10:39:03: redis_version=7.0.15 mem_usage=1.87M clients_connected=1 db_keys=84

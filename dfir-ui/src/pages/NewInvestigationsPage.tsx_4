@@ -1,0 +1,239 @@
+import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { fetcher } from "../api/fetcher";
+import AddResourceModal from "../components/AddResourceModal";
+import ActionsDropdown from "../components/ActionsDropdown";
+import { Resource } from "../types";
+
+interface InvestigationDetail {
+  case_number: string;
+  title: string;
+  description: string;
+  priority: "Critical" | "High" | "Medium" | "Low";
+  status: "Open" | "In Progress" | "Closed" | "Archived";
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+  category?: string;
+}
+
+interface Task {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface InvestigationResponse {
+  case: InvestigationDetail;
+  tasks: Task[];
+  reports: any[];
+  timeline: any[];
+  findings: any[];
+}
+
+type ResourceMap = Record<string, Resource[]>;
+
+const priorityBadgeClass: Record<string, string> = {
+  Critical: "bg-red-600 text-white",
+  High: "bg-orange-500 text-white",
+  Medium: "bg-yellow-400 text-black",
+  Low: "bg-green-400 text-black",
+};
+
+const statusBadgeClass: Record<string, string> = {
+  Open: "bg-blue-500 text-white",
+  "In Progress": "bg-purple-500 text-white",
+  Closed: "bg-gray-500 text-white",
+  Archived: "bg-gray-700 text-white",
+};
+
+export default function NewInvestigationsPage() {
+  const { case_number } = useParams<{ case_number?: string }>();
+  const [activeTab, setActiveTab] = useState("Overview");
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [resourceData, setResourceData] = useState<ResourceMap>({});
+  const [resources, setResources] = useState<Resource[]>([]);
+
+  const { data, isLoading, error } = useQuery<InvestigationResponse>({
+    queryKey: ["investigation", case_number],
+    queryFn: () => fetcher(`investigations/${case_number}`),
+    enabled: !!case_number,
+  });
+
+  const handleTabClick = (tab: string) => setActiveTab(tab);
+
+  const handleAddResourceClick = async () => {
+    try {
+      const res = await fetcher("investigations/resources/available");
+      const resourceMap: ResourceMap = res || {};
+      setResourceData(resourceMap);
+      setResourceModalOpen(true);
+    } catch (err) {
+      console.error("Error fetching resources:", err);
+      alert("Failed to fetch resources.");
+    }
+  };
+
+  const handleResourceAdd = (newResources: Resource[]) => {
+    setResources((prev) => [...prev, ...newResources]);
+    setResourceModalOpen(false);
+  };
+
+  const handlers = {
+    handleViewActivity: (id: string) => console.log("View Activity for", id),
+    handleRevokeAccess: (resourceId: string, roleId: string) => console.log("Revoke access", resourceId, roleId),
+    handleTerminateAllSessions: (id: string) => console.log("Terminate sessions", id),
+    handleRevokeAllPermissions: (id: string) => console.log("Revoke permissions", id),
+    handleAddNote: (id: string) => console.log("Add note", id),
+    handleMalwareAnalysis: (id: string) => console.log("Malware analysis", id),
+    handleMemoryForensics: (id: string) => console.log("Memory forensics", id),
+    handleDiskAnalysis: (id: string) => console.log("Disk analysis", id),
+    handleMarkAsCompromised: (id: string, val: boolean) =>
+      setResources(prev => prev.map(r => r.id === id ? { ...r, compromised: val } : r)),
+handleMarkCompromised: (id: string, val: boolean) => {
+    setResources(prev =>
+      prev.map(r => r.id === id ? { ...r, compromised: val } : r)
+    );
+  },
+   handleExploreFileSystem: (id: string) => console.log("Explore file system", id),
+    handleCopyResource: (id: string) => console.log("Copy resource", id),
+    handleCollectLogs: (id: string) => console.log("Collect logs", id),
+    handleContainResource: (id: string) =>
+      setResources(prev => prev.map(r => r.id === id ? { ...r, contained: true } : r)),
+    handleUncontainResource: (id: string) =>
+      setResources(prev => prev.map(r => r.id === id ? { ...r, contained: false } : r)),
+    handleDestroyResource: (id: string) => {
+      if (window.confirm("Are you sure you want to destroy this resource?")) {
+        setResources(prev => prev.filter(r => r.id !== id));
+      }
+    }
+  };
+
+  if (!case_number) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold mb-4">Create New Investigation</h1>
+      </div>
+    );
+  }
+
+  if (isLoading) return <p className="p-6 text-gray-400">Loading investigation details...</p>;
+  if (error) return <p className="p-6 text-red-600">Error loading investigation</p>;
+  if (!data || !data.case) return <p className="p-6 text-gray-500">No data found for this case.</p>;
+
+  const inv = data.case;
+
+  return (
+    <div className="p-6 space-y-6 bg-gradient-to-br from-teal-600 to-indigo-800 min-h-screen text-white">
+      <div className="text-sm underline cursor-pointer hover:text-gray-300">&larr; Back to investigations</div>
+
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-bold">{inv.title}</h1>
+          <span className={`px-2 py-1 rounded-full text-sm font-semibold ${priorityBadgeClass[inv.priority]}`}>{inv.priority}</span>
+          <span className={`px-2 py-1 rounded-full text-sm font-semibold ${statusBadgeClass[inv.status]}`}>{inv.status}</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Edit Case</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Generate Report</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Actions</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Communicate</button>
+          <button className="bg-red-600 hover:bg-red-700 rounded px-3 py-1 text-sm">Isolate All Compromised Resources</button>
+        </div>
+      </div>
+
+      <div className="flex gap-6 border-b border-white/30 pb-2">
+        {["Overview", "Resources Under Investigation", "Evidence", "Timeline", "Investigation Tasks"].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabClick(tab)}
+            className={`text-white text-sm ${activeTab === tab ? "underline font-semibold" : "hover:underline"}`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "Resources Under Investigation" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-lg">Resources Under Investigation</h2>
+            <button
+              onClick={handleAddResourceClick}
+              className="bg-teal-600 hover:bg-teal-700 text-white rounded px-3 py-1 text-sm"
+            >
+              + Add Resource
+            </button>
+          </div>
+
+          {resources.length === 0 ? (
+            <p className="text-sm text-gray-600">No resources found yet. Click above to fetch.</p>
+          ) : (
+            <div className="space-y-3">
+              {resources.map((res, idx) => (
+                <div key={idx} className="border rounded-lg p-4 bg-cyan-50 text-black shadow">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold">{res.name}</span>
+                      <span className="bg-gray-200 text-gray-800 px-2 py-0.5 rounded-full text-xs">
+                        {res.contained ? "Contained" : "Not Contained"}
+                      </span>
+                    </div>
+                    <ActionsDropdown resource={res} handlers={handlers} />
+                  </div>
+                  <div className="text-sm text-gray-700 mt-2">
+                    Cloud: {res.cloud_provider} • Region: {res.awsRegion} • Type: {res.type} •
+                    <span className="text-green-600"> Status: {res.status}</span>
+                    {res.compromised && (
+                      <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded ml-2">Compromised</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-600 mt-1">IP: {res.ip}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "Overview" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg mb-2">Case Overview</h2>
+          <p className="text-sm">{inv.description}</p>
+        </div>
+      )}
+
+      {activeTab === "Timeline" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Timeline (Coming Soon)</h2>
+        </div>
+      )}
+
+      {activeTab === "Evidence" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Evidence (Coming Soon)</h2>
+        </div>
+      )}
+
+      {activeTab === "Investigation Tasks" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Investigation Tasks (Coming Soon)</h2>
+        </div>
+      )}
+
+      <AddResourceModal
+        isOpen={resourceModalOpen}
+        onClose={() => setResourceModalOpen(false)}
+        resourceData={resourceData}
+        onAdd={handleResourceAdd}
+      />
+    </div>
+  );
+}
+

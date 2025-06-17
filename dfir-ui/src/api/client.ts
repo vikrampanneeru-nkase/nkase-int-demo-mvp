@@ -9,5 +9,6 @@ const apiClient = axios.create({
     "Content-Type": "application/json",
   },
 });
-
+console.log("Base URL from env:", import.meta.env.VITE_API_BASE_URL);
+console.log("apiClient",apiClient);
 export default apiClient;

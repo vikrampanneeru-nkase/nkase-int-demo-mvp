@@ -1,173 +1,195 @@
+import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { fetcher } from "../api/fetcher";
-import apiClient from "@/api/client";
+import  AddResourceModal  from "../components/AddResourceModal";
+interface InvestigationDetail {
+  case_number: string;
+  title: string;
+  description: string;
+  priority: "Critical" | "High" | "Medium" | "Low";
+  status: "Open" | "In Progress" | "Closed" | "Archived";
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+  category?: string;
+}
 
-type EC2Instance = {
-  id: string;
-  name: string;
-  instance_type: string;
-  state: string;
-  availability_zone: string;
-  private_ip: string;
-  public_ip: string | null;
-  volume_ids: string[];
+interface Task {
+  id: number;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assigned_to: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface InvestigationResponse {
+  case: InvestigationDetail;
+  tasks: Task[];
+  reports: any[];
+  timeline: any[];
+  findings: any[];
+}
+
+const priorityBadgeClass = {
+  Critical: "bg-red-600 text-white",
+  High: "bg-orange-500 text-white",
+  Medium: "bg-yellow-400 text-black",
+  Low: "bg-green-400 text-black",
+};
+
+const statusBadgeClass = {
+  Open: "bg-blue-500 text-white",
+  "In Progress": "bg-purple-500 text-white",
+  Closed: "bg-gray-500 text-white",
+  Archived: "bg-gray-700 text-white",
 };
 
 export default function NewInvestigationsPage() {
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [actionResults, setActionResults] = useState<string[]>([]);
-  const [loadingInstances, setLoadingInstances] = useState<string[]>([]);
+  const { case_number } = useParams<{ case_number?: string }>();
+  const [activeTab, setActiveTab] = useState("Overview");
+  //const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  //const [resourceData, setResourceData] = useState<any[]>([]);
+  const [resourceData, setResourceData] = useState({});
+const [resourceModalOpen, setResourceModalOpen] = useState(false);
 
-
-  const {
-    data,
-    isLoading,
-    error,
-    refetch,
-  } = useQuery<EC2Instance[]>({
-    queryKey: ["investigations_new"],
-    queryFn: async () => {
-      const raw = await fetcher("investigations/new");
-
-      const mapped = raw.map((item: any): EC2Instance => {
-        const nameTag = item.Tags?.find((tag: any) => tag.Key === "Name");
-        return {
-          id: item.InstanceId,
-          name: nameTag?.Value || "Unnamed",
-          instance_type: item.InstanceType,
-          state: item.State,
-          availability_zone: item.AvailabilityZone,
-          private_ip: item.PrivateIpAddress,
-          public_ip: item.PublicIpAddress || null,
-          volume_ids: item.VolumeIds || [],
-        };
-      });
-
-      return mapped;
-    },
+  const { data, isLoading, error } = useQuery<InvestigationResponse>({
+    queryKey: ["investigation", case_number],
+    queryFn: () => fetcher(`investigations/${case_number}`),
+    enabled: !!case_number,
   });
 
-  const toggleCheckbox = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
+  const handleTabClick = (tab: string) => setActiveTab(tab);
+
+  const handleAddResourceClick = async () => {
+    try {
+      const res = await fetcher("investigations/resources/available");
+      const { EC2 = [], S3 = [], DynamoDB = [] } = response.data || {};
+      setResourceData(res);
+      setResourceData({ EC2, S3, DynamoDB });
+      setResourceModalOpen(true);
+    } catch (err) {
+      console.error("Error fetching resources:", err);
+      alert("Failed to fetch resources.");
+    }
+	finally {
+      setLoading(false);
+      setIsModalOpen(true);
+    }
   };
-  const isActionInProgress = selectedIds.some((id) =>
-  loadingInstances.includes(id)
-  );
-  const handleAction = async (action: "quarantine" | "mitigate") => {
-  if (selectedIds.length === 0) {
-    setActionMessage("Please select at least one instance.");
-    setActionResults([]);
-    return;
+
+  if (!case_number) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold mb-4">Create New Investigation</h1>
+      </div>
+    );
   }
 
-  setLoadingInstances(selectedIds); // Disable buttons for selected instances
-
-  try {
-    const response = await apiClient.post(`/investigations/${action}`, {
-      instance_ids: selectedIds,
-    });
-
-    setActionResults(response.data as string[]);
-    setActionMessage(null);
-    setSelectedIds([]);
-    await refetch();
-  } catch (err: any) {
-    setActionMessage(`Error during ${action}: ${err.message}`);
-    setActionResults([]);
-  } finally {
-    setLoadingInstances([]); // Re-enable buttons
+  if (isLoading) {
+    return <p className="p-6 text-gray-400">Loading investigation details...</p>;
   }
-};
 
-  if (isLoading) return <div className="p-4">Loading investigations...</div>;
-  if (error) return <div className="p-4">Error loading investigations</div>;
-  if (!Array.isArray(data) || data.length === 0) {
-    return <div className="p-4">No investigations found.</div>;
+  if (error) {
+    return <p className="p-6 text-red-600">Error loading investigation</p>;
   }
+
+  if (!data || !data.case) {
+    return <p className="p-6 text-gray-500">No data found for this case.</p>;
+  }
+
+  const inv = data.case;
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-4">New Investigations</h2>
-
-      {/* Action Buttons */}
-      <div className="mb-4 flex gap-4">
-        <button
-  onClick={() => handleAction("quarantine")}
-  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-  disabled={selectedIds.length === 0 || isActionInProgress}
->
-  {isActionInProgress ? "Processing..." : "Quarantine"}
-</button>
-
-<button
-  onClick={() => handleAction("mitigate")}
-  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-  disabled={selectedIds.length === 0 || isActionInProgress}
->
-  {isActionInProgress ? "Processing..." : "Mitigate"}
-</button>
-
+    <div className="p-6 space-y-6 bg-gradient-to-br from-teal-600 to-indigo-800 min-h-screen text-white">
+      <div className="text-sm underline cursor-pointer hover:text-gray-300">
+        &larr; Back to investigations
       </div>
 
-      {/* Action Response Message */}
-      {actionMessage && (
-        <div className="mb-4 text-sm text-green-700 font-medium">
-          {actionMessage}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-3xl font-bold">{inv.title}</h1>
+          <span className={`px-2 py-1 rounded-full text-sm font-semibold ${priorityBadgeClass[inv.priority]}`}>
+            {inv.priority}
+          </span>
+          <span className={`px-2 py-1 rounded-full text-sm font-semibold ${statusBadgeClass[inv.status]}`}>
+            {inv.status}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Edit Case</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Generate Report</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Actions</button>
+          <button className="bg-teal-500 hover:bg-teal-600 rounded px-3 py-1 text-sm">Communicate</button>
+          <button className="bg-red-600 hover:bg-red-700 rounded px-3 py-1 text-sm">
+            Isolate All Compromised Resources
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-6 border-b border-white/30 pb-2">
+        {["Overview", "Resources Under Investigation", "Evidence", "Timeline", "Investigation Tasks"].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabClick(tab)}
+            className={`text-white text-sm ${
+              activeTab === tab ? "underline font-semibold" : "hover:underline"
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "Resources Under Investigation" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold text-lg">Resources Under Investigation</h2>
+            <button
+              onClick={handleAddResourceClick}
+              className="bg-teal-600 hover:bg-teal-700 text-white rounded px-3 py-1 text-sm"
+            >
+              + Add Resource
+            </button>
+          </div>
+
+          <p className="mt-2 text-sm text-gray-600">No resources found yet. Click above to fetch.</p>
         </div>
       )}
 
-      {/* Results Display */}
-      {actionResults.length > 0 && (
-        <ul className="list-disc pl-6 space-y-1 mb-4">
-          {actionResults.map((line, idx) => {
-            const isSuccess = line.includes("Success");
-            const textColor = isSuccess ? "text-green-600" : "text-red-600";
-            return (
-              <li key={idx} className={`text-sm font-medium ${textColor}`}>
-                {line.replace("status : ", "")}
-              </li>
-            );
-          })}
-        </ul>
+      {activeTab === "Overview" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg mb-2">Case Overview</h2>
+          <p className="text-sm">{inv.description}</p>
+        </div>
       )}
 
-      {/* Grid of EC2 Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.map((item) => (
-          <div
-            key={item.id}
-            className="bg-white p-4 rounded shadow flex gap-2 items-start"
-          >
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={selectedIds.includes(item.id)}
-              onChange={() => toggleCheckbox(item.id)}
-            />
-            <div className="text-sm text-gray-800">
-              <div className="font-bold text-base">{item.name}</div>
-              <div className="mt-1 text-gray-600">ID: {item.id}</div>
-              <div>Type: {item.instance_type}</div>
-              <div>State: {item.state}</div>
-              <div>AZ: {item.availability_zone}</div>
-              <div>Private IP: {item.private_ip}</div>
-              <div>Public IP: {item.public_ip || "N/A"}</div>
-              <div className="mt-2">
-                <strong>Volume ID{item.volume_ids.length > 1 ? "s" : ""}:</strong>
-                <ul className="list-disc list-inside">
-                  {item.volume_ids.map((vol, i) => (
-                    <li key={i} className="text-gray-700">{vol}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {activeTab === "Timeline" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Timeline (Coming Soon)</h2>
+        </div>
+      )}
+
+      {activeTab === "Evidence" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Evidence (Coming Soon)</h2>
+        </div>
+      )}
+
+      {activeTab === "Investigation Tasks" && (
+        <div className="bg-white text-black rounded-xl p-4 shadow">
+          <h2 className="font-semibold text-lg">Investigation Tasks (Coming Soon)</h2>
+        </div>
+      )}
+
+      <AddResourceModal
+        isOpen={resourceModalOpen}
+        onClose={() => setResourceModalOpen(false)}
+        resourceData={resourceData} 
+      />
     </div>
   );
 }

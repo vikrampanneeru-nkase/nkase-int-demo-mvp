@@ -1,6 +1,7 @@
 // src/components/Sidebar.tsx
+
 import React from "react";
-import { FolderPlus } from 'lucide-react';
+import { FolderPlus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -12,7 +13,6 @@ import {
   PieChart,
   Settings,
   Folder,
-  Plus,
 } from "lucide-react";
 import SidebarItem from "./SidebarItem";
 
@@ -20,7 +20,6 @@ export default function Sidebar() {
   const navigate = useNavigate();
 
   const handleNewInvestigation = () => {
-    console.log("clicked New Investigation");
     navigate("/newinvestigations");
   };
 
@@ -45,8 +44,10 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="h-screen w-72 bg-gradient-to-b from-sidebar-start via-sidebar-mid to-sidebar-end p-4 flex flex-col justify-between text-white font-sans">
-      <div>
+<div className="h-screen w-72 bg-[#101828] text-white flex flex-col justify-between p-4 z-20 shadow-lg">
+      
+<div>
+        {/* App Logo/Header */}
         <div className="flex items-center gap-3 px-2 mb-6">
           <div className="bg-cyan-400 p-2 rounded-xl">
             <Shield className="text-white w-5 h-5" />
@@ -54,22 +55,27 @@ export default function Sidebar() {
           <h1 className="text-xl font-semibold">DFIR Platform</h1>
         </div>
 
-        <div className="mb-4">
-         <button
-        onClick={handleNewInvestigation}
-        className="flex items-center gap-2 px-4 py-2 rounded-2xl text-black font-medium bg-gradient-to-r from-cyan-500 to-purple-600 hover:opacity-90 shadow-md transition"
-     >
+        {/* New Investigation Button */}
+        <div className="mb-6 px-2">
+          <button
+            onClick={handleNewInvestigation}
+            className="w-full flex items-center gap-2 px-4 py-2 rounded-2xl text-black font-semibold bg-gradient-to-r from-cyan-500 to-purple-600 hover:opacity-90 shadow-md transition"
+          >
             <FolderPlus size={20} />
-      New Investigation
-    </button>
+            New Investigation
+          </button>
+        </div>
 
+        {/* Main Navigation */}
+        <div className="space-y-1 px-2">
           {mainItems.map(({ icon, label, to }) => (
             <SidebarItem key={to} icon={icon} label={label} to={to} />
           ))}
         </div>
 
-        <div className="border-t border-white/20 mt-4 pt-4">
-          <p className="text-[11px] font-semibold text-white/60 px-4 mb-2 uppercase tracking-wide">
+        {/* Management Section */}
+        <div className="border-t border-white/20 mt-6 pt-4 px-2">
+          <p className="text-[11px] font-semibold text-gray-400 mb-2 uppercase tracking-wide">
             Management
           </p>
           {managementItems.map(({ icon, label, to }) => (
@@ -78,8 +84,9 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <div className="mt-6">
-        <p className="text-[11px] font-semibold text-white/60 px-4 mb-2 uppercase tracking-wide">
+      {/* Recent Investigations */}
+      <div className="mt-6 px-2">
+        <p className="text-[11px] font-semibold text-gray-400 mb-2 uppercase tracking-wide">
           Recent Investigations
         </p>
         {recentInvestigations.map(({ icon, label, to }) => (
@@ -89,3 +96,4 @@ export default function Sidebar() {
     </div>
   );
 }
+

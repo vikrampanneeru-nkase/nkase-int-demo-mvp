@@ -1,0 +1,28 @@
+// tailwind.config.ts
+import { type Config } from "tailwindcss";
+
+const config: Config = {
+  content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ["Inter", "sans-serif"],
+      },
+      colors: {
+        sidebar: {
+          start: "#0f3d4d",      // Top gradient
+          mid: "#1e615d",        // Middle gradient
+          end: "#4e2a84",        // Bottom gradient
+          active: "#663399",     // Active menu item
+          hover: "#5c2d91",      // Hovered menu item
+          section: "#9CA3AF",    // Section headers
+          border: "#3c4a5c",     // Divider lines
+        },
+      },
+    },
+  },
+  plugins: [],
+};
+
+export default config;
+
