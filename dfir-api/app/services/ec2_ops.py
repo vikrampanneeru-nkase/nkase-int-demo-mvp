@@ -14,29 +14,51 @@ import datetime as dt
 from app.db.database import async_session_maker
 #from app.workers.mitigation_worker import _set_status
 from app.helpers.status_updater import set_status
-
-role_arn = "arn:aws:iam::339751003344:role/CrossAccountEC2Access"
+ 
+tenat_role_arn = "arn:aws:iam::339751003344:role/CrossAccEBSVolSnapCreation"  ### Tenat account 
 region = "us-east-1"
-
+nkase_role_arn = "arn:aws:iam::483746227110:role/EC2Policy" # accont deploy
+ 
 BACKOFF_MAX = 5
 BACKOFF_BASE = 2
 SNAP_POLL_SECS =90   # 3 minutes
 STATUS_KEY_PREFIX = "snapshot_status:"
 
-async def get_cross_account_session(role_arn: str):
+async def get_cross_account_session(tenant_role_arn: str):
     base_session = aioboto3.Session()
+
     async with base_session.client("sts") as sts:
         response = await sts.assume_role(
-            RoleArn=role_arn,
+            RoleArn=tenant_role_arn,
             RoleSessionName="DFIRSession"
         )
         credentials = response["Credentials"]
-    return aioboto3.Session(
+
+    assumed_session = aioboto3.Session(
         aws_access_key_id=credentials["AccessKeyId"],
         aws_secret_access_key=credentials["SecretAccessKey"],
         aws_session_token=credentials["SessionToken"],
     )
 
+    return assumed_session
+
+async def get_nkase_demo_session(nkase_role_arn: str):
+    base_session = aioboto3.Session()
+
+    async with base_session.client("sts") as sts:
+        response = await sts.assume_role(
+            RoleArn=nkase_role_arn,
+            RoleSessionName="DFIRSession"
+        )
+        credentials = response["Credentials"]
+
+    assumed_session = aioboto3.Session(
+        aws_access_key_id=credentials["AccessKeyId"],
+        aws_secret_access_key=credentials["SecretAccessKey"],
+        aws_session_token=credentials["SessionToken"],
+    )
+
+    return assumed_session
 
 async def get_account_id(session):
     async with session.client("sts") as sts_client:
@@ -94,7 +116,7 @@ async def is_instance_quarantined(db: AsyncSession, instance_id: str, account_id
 
 async def list_instances(db: AsyncSession):
     # Assume the cross-account role and get a session
-    session = await get_cross_account_session(role_arn)
+    session = await get_cross_account_session(tenat_role_arn)
 
     # Optionally get the account ID if you want to use or log it
     account_id = await get_account_id(session)
@@ -137,9 +159,9 @@ async def list_instances(db: AsyncSession):
     return instances
 
 
-async def quarantine_instance(instance_ids: list, db: AsyncSession):
+async def quarantine_instance(instance_ids: list, case_number: str, db: AsyncSession):
     results = []
-    session = await get_cross_account_session(role_arn)
+    session = await get_cross_account_session(tenat_role_arn)
     ec2 = await get_ec2_client(session)
     account_id = await get_account_id(session)
 
@@ -176,15 +198,22 @@ async def quarantine_instance(instance_ids: list, db: AsyncSession):
             db.add(ActivityLog(id=uuid.uuid4(),account_id=account_id,instance_id=instance_id,vpc_id=vpc_id,
                                action="Isolate",
                     status="success",message="isolate successful",
-                                 performed_at=datetime.utcnow()
-                    ))
+                                 performed_at=datetime.utcnow(),
+                                 ))
             await db.commit()
+            #here update case table once the instance isloated add status in the table like isquarantine='Y'
+            from app.models.cases import Case
+            case_obj = await db.execute(select(Case).where(Case.case_number == case_number))
+            case = case_obj.scalar_one_or_none()
+            if case:
+                case.isquarantine = 'Y'
+                case.updated_at = datetime.utcnow()
+                await db.commit()
             results.append(f"Isolate success: {instance_id}")
 
         except ClientError as e:
             error_message = e.response['Error']['Message']
 
-            
             db.add(ActivityLog(
                 id=uuid.uuid4(),
                 account_id=account_id,
@@ -202,9 +231,9 @@ async def quarantine_instance(instance_ids: list, db: AsyncSession):
     return results
 
 
-async def un_quarantine_instance(instance_ids: list, db: AsyncSession):
+async def un_quarantine_instance(instance_ids: list, case_number: str, db: AsyncSession):
     results = []
-    session = await get_cross_account_session(role_arn)
+    session = await get_cross_account_session(tenat_role_arn)
     ec2 = await get_ec2_client(session)
     account_id = await get_account_id(session)
 
@@ -247,7 +276,15 @@ async def un_quarantine_instance(instance_ids: list, db: AsyncSession):
             ))
 
             await db.commit()
-            results.append(f"De-isolate success: {instance_id}")
+            from app.models.cases import Case
+            case_obj = await db.execute(select(Case).where(Case.case_number == case_number))
+            case = case_obj.scalar_one_or_none()
+            if case:
+                case.isquarantine = 'N'
+                case.updated_at = datetime.utcnow()
+                await db.commit()
+            #results.append(f"Isolate success: {instance_id}")
+            results.append(f"De isolated success: {instance_id}")
 
         except ClientError as e:
             error_message = e.response['Error']['Message']
@@ -274,7 +311,7 @@ async def mitigate_instance(instance_ids: list[str], db):
     return {"detail": f"Successfully mitigated {len(instance_ids)} instance(s)."}
 
 async def list_s3_buckets():
-    session = await get_cross_account_session(role_arn)
+    session = await get_cross_account_session(tenat_role_arn)
     account_id = await get_account_id(session)
     print(f"Listing buckets in account: {account_id}")
 
@@ -304,7 +341,7 @@ async def list_s3_buckets():
         return result
     
 async def list_dynamodb_tables():
-    session = await get_cross_account_session(role_arn)
+    session = await get_cross_account_session(tenat_role_arn)
     account_id = await get_account_id(session)
     print(f"Listing instances in account: {account_id}")
     async with session.client("dynamodb", region_name="us-east-1") as dynamodb:
@@ -313,137 +350,356 @@ async def list_dynamodb_tables():
         return tables
 
 
-async def _set_status(redis, job_id: str, stage: str, data: dict = None):
-    payload = {
-        "stage": stage,
-        "timestamp": datetime.utcnow().isoformat(),
-        "data": data or {}
-    }
-    key = f"{STATUS_KEY_PREFIX}{job_id}"
-    await redis.set(key, json.dumps(payload))
-    async with async_session_maker() as session:
-        await save_job_to_db(session, job_id, data.get("instance_id") if data else None, stage, payload)
+async def create_snapshot_for_volume(ec2, redis, job_id, instance_id, vol_id, account_id=None, case_number=None):
+    """Create a snapshot for a specific volume with exponential backoff on rate limit errors."""
+    import asyncio
+    from botocore.exceptions import ClientError
+    max_retries = 6
+    base_delay = 2  # seconds
+    for attempt in range(1, max_retries + 1):
+        try:
+            await set_status(redis, job_id, account_id, case_number, "snapshot_create_started", {"volume_id": vol_id, "instance_id": instance_id, "attempt": attempt})
+            response = await ec2.create_snapshot(
+                VolumeId=vol_id,
+                Description=f"Snapshot of {instance_id} volume {vol_id}",
+                TagSpecifications=[{
+                    "ResourceType": "snapshot",
+                    "Tags": [
+                        {"Key": "InstanceId", "Value": instance_id},
+                        {"Key": "JobId", "Value": job_id}
+                    ],
+                }],
+            )
+            snapshot_id = response["SnapshotId"]
+            await set_status(redis, job_id, account_id, case_number, "snapshot_creation_initiated", {
+                "volume_id": vol_id,
+                "snapshot_id": snapshot_id,
+                "instance_id": instance_id
+            })
+            return snapshot_id
+        except ClientError as e:
+            error_msg = str(e)
+            if "SnapshotCreationPerVolumeRateExceeded" in error_msg and attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1)) + (attempt * 0.5)
+                await set_status(redis, job_id, account_id, case_number, "rate_limited_retry", {"volume_id": vol_id, "attempt": attempt, "delay": delay, "error": error_msg})
+                await asyncio.sleep(delay)
+                continue
+            await set_status(redis, job_id, account_id, case_number, "failed", {"volume_id": vol_id, "error": error_msg, "instance_id": instance_id})
+            raise
 
-"""""
-async def create_snapshot(instance_id: str, job_id: str, redis) -> list:
-    await _set_status(redis, job_id, "starting", {"instance_id": instance_id})
-    session = await get_cross_account_session(role_arn)
 
-    async with session.client("ec2", region_name="us-east-1") as ec2:
-        instance = (await ec2.describe_instances(InstanceIds=[instance_id]))["Reservations"][0]["Instances"][0]
-        volume_ids = [bdm["Ebs"]["VolumeId"] for bdm in instance["BlockDeviceMappings"]]
-        await _set_status(redis, job_id, "volumes_found", {"volume_ids": volume_ids})
+async def modify_snapshot_permission_and_log(ec2, redis, job_id, account_id, case_number, instance_id, snapshot_map, errors):
+    """Modify snapshot permission for each snapshot and log the result/status."""
+    for vol_id, nkashesnapshotId in snapshot_map.items():
+        try:
+            await ec2.modify_snapshot_attribute(
+                Attribute='createVolumePermission',
+                OperationType='add',
+                SnapshotId=nkashesnapshotId,
+                UserIds=['483746227110']
+            )
+            print(f"[SNAPSHOT] Modified attribute for snapshot {nkashesnapshotId} to allow copy in 483746227110")
 
-        snapshot_map = {}
-
-        for vol in volume_ids:
-            try:
-                await _set_status(redis, job_id, "snapshot_create", {"volume_id": vol, "attempt": 1})
-                snap = await ec2.create_snapshot(
-                    VolumeId=vol,
-                    Description=f"Snapshot of {instance_id} volume {vol}",
-                    TagSpecifications=[{
-                        "ResourceType": "snapshot",
-                        "Tags": [
-                            {"Key": "InstanceId", "Value": instance_id},
-                            {"Key": "JobId", "Value": job_id}
-                        ],
-                    }],
-                )
-                snapshot_map[vol] = snap["SnapshotId"]
-            except ClientError as e:
-                await _set_status(redis, job_id, "failed", {"error": str(e)})
-                raise
-
-        await _set_status(redis, job_id, "all_snapshots_started", {"snapshots": snapshot_map})
-
-        pending = set(snapshot_map.values())
-        while pending:
-            await asyncio.sleep(120)
-            resp = await ec2.describe_snapshots(SnapshotIds=list(pending))
-            for snap in resp["Snapshots"]:
-                sid = snap["SnapshotId"]
-                state = snap["State"]
-                prog = snap.get("Progress", "")
-                await _set_status(redis, job_id, "snapshot_progress", {
-                    "snapshot_id": sid,
-                    "state": state,
-                    "progress": prog,
+            # Check if the modified snapshot creation is completed
+            getSnapshotStatus = await ec2.describe_snapshots(SnapshotIds=[nkashesnapshotId])
+            snap_state = getSnapshotStatus["Snapshots"][0]["State"]
+            if snap_state == 'completed':
+                await set_status(redis, job_id, account_id, case_number, "completed", {
+                    "job_id": job_id,
+                    "case_number": case_number,
+                    "instance_id": instance_id,
+                    "account_id": account_id,
+                    "snapshots": snapshot_map,
+                    "status": f"Modified Permission for the snapshot {nkashesnapshotId} and snapshot is completed.",
+                    "percentage": 100,
+                    "errors": errors
                 })
-                if state == "completed":
-                    pending.discard(sid)
+            else:
+                await set_status(redis, job_id, account_id, case_number, "completed", {
+                    "job_id": job_id,
+                    "case_number": case_number,
+                    "instance_id": instance_id,
+                    "account_id": account_id,
+                    "snapshots": snapshot_map,
+                    "status": f"Modified Permission for the snapshot {nkashesnapshotId} but snapshot state is {snap_state}.",
+                    "percentage": 100,
+                    "errors": errors
+                })
+            # After permission modification, create volume and attach to instance
+            await create_volume_from_snapshot_in_demo_account(
+                nkashesnapshotId,
+                job_id=job_id,
+                case_number=case_number,
+                instance_id=instance_id,
+                redis=redis,
+                account_id='483746227110',
+                attach_instance_id='i-0f2b7aeaef6e78a4b'
+            )
+        except Exception as e:
+            print(f"[SNAPSHOT] Failed to modify attribute for snapshot {nkashesnapshotId}: {e}")
+            await set_status(redis, job_id, account_id, case_number, "completed", {
+                "job_id": job_id,
+                "case_number": case_number,
+                "instance_id": instance_id,
+                "account_id": account_id,
+                "snapshots": snapshot_map,
+                "status": f"Failed to modify permission for the snapshot {nkashesnapshotId}",
+                "percentage": 100,
+                "errors": str(e)
+            })
 
-        await _set_status(redis, job_id, "completed", {"snapshots": snapshot_map})
+
+async def monitor_snapshots(ec2, redis, job_id, instance_id, snapshot_map, case_number=None, account_id=None):
+    """Monitor the progress of snapshot creation and report percentage completion."""
+    pending_snapshots = set(snapshot_map.values())
+    total = len(snapshot_map)
+    completed = 0
+    errors = []
+    progress_map = {sid: 0 for sid in snapshot_map.values()}
+
+    while pending_snapshots:
+        await asyncio.sleep(30)  # Poll more frequently to avoid long waits
+        resp = await ec2.describe_snapshots(SnapshotIds=list(pending_snapshots))
+
+        for snap in resp["Snapshots"]:
+            sid = snap["SnapshotId"]
+            state = snap["State"]
+            progress = snap.get("Progress", "0%")
+            progress_pct = int(progress.replace("%", "")) if "%" in progress else 0
+            progress_map[sid] = progress_pct
+            volume_id = next((v for v, s in snapshot_map.items() if s == sid), None)
+            status = state
+            error_msg = None
+            if state == "completed":
+                completed += 1
+                pending_snapshots.discard(sid)
+            elif state == "error":
+                error_msg = snap.get("StatusMessage", "Snapshot failed")
+                errors.append({"snapshot_id": sid, "error": error_msg})
+                pending_snapshots.discard(sid)
+            percentage = int((completed / total) * 100) if total else 100
+            await set_status(redis, job_id, account_id, case_number, "snapshot_progress", {
+                "job_id": job_id,
+                "case_number": case_number,
+                "instance_id": instance_id,
+                "account_id": account_id,
+                "volume_id": volume_id,
+                "snapshot_id": sid,
+                "status": status,
+                "percentage": percentage,
+                "progress": progress,
+                "errors": error_msg
+            })
+    # Final completion status
+    await set_status(redis, job_id, account_id, case_number, "completed", {
+        "job_id": job_id,
+        "case_number": case_number,
+        "instance_id": instance_id,
+        "account_id": account_id,
+        "snapshots": snapshot_map,
+        "status": "completed",
+        "percentage": 100,
+        "errors": errors
+    })
+
+    # Refactored: call permission modification and logging function
+    await modify_snapshot_permission_and_log(ec2, redis, job_id, account_id, case_number, instance_id, snapshot_map, errors)
+    
+
+
+async def create_snapshots(instance_id: str, job_id: str, redis, case_number=None, account_id=None):
+    """Main function to create snapshots for all volumes of an instance."""
+    session = await get_cross_account_session(tenat_role_arn)
+
+    # Step 1: Get instance details and volume IDs
+    instance, volume_ids = await get_instance_details(session, instance_id)
+    await set_status(redis, job_id, account_id, case_number, "volumes_found", {"instance_id": instance_id, "volume_ids": volume_ids})
+
+    snapshot_map = {}
+
+    # Step 2: Create snapshots for each volume
+    async with session.client("ec2", region_name="us-east-1") as ec2:
+        for vol_id in volume_ids:
+            snapshot_id = await create_snapshot_for_volume(ec2, redis, job_id, instance_id, vol_id, account_id=account_id, case_number=case_number)
+            snapshot_map[vol_id] = snapshot_id
+
+        # Step 3: Monitor snapshot progress
+        await monitor_snapshots(ec2, redis, job_id, instance_id, snapshot_map, case_number, account_id)
 
     return [{"volume_id": v, "snapshot_id": s} for v, s in snapshot_map.items()]
-"""
 
 
-
-async def create_snapshot(instance_id: str, job_id: str, redis):
-    session = await get_cross_account_session(role_arn)
-
+async def get_instance_details(session, instance_id: str, job_id: str = None, account_id: str = None, case_number: str = None, redis=None):
+    """Fetch instance details and volume IDs, and log to DB/Redis if job_id is provided."""
     async with session.client("ec2", region_name="us-east-1") as ec2:
         reservations = await ec2.describe_instances(InstanceIds=[instance_id])
         instance = reservations["Reservations"][0]["Instances"][0]
         volume_ids = [bdm["Ebs"]["VolumeId"] for bdm in instance["BlockDeviceMappings"]]
+    # Log to DB/Redis if job_id is provided
+    if job_id:
+        from app.helpers.status_updater import set_status
+        await set_status(
+            redis=redis,
+            job_id=job_id,
+            account_id=account_id or instance.get("AccountId"),
+            case_number=case_number,
+            stage="instance_details_fetched",
+            data={
+                "instance_id": instance_id,
+                "volume_ids": volume_ids,
+                "instance_details": instance
+            }
+        )
+    return instance, volume_ids
 
-        await set_status(redis, job_id, "volumes_found", {"instance_id": instance_id, "volume_ids": volume_ids})
-
-        snapshot_map = {}
-
-        for vol_id in volume_ids:
-            try:
-                await set_status(redis, job_id, "snapshot_create_started", {"volume_id": vol_id, "instance_id": instance_id})
-
-                response = await ec2.create_snapshot(
-                    VolumeId=vol_id,
-                    Description=f"Snapshot of {instance_id} volume {vol_id}",
-                    TagSpecifications=[{
-                        "ResourceType": "snapshot",
-                        "Tags": [
-                            {"Key": "InstanceId", "Value": instance_id},
-                            {"Key": "JobId", "Value": job_id}
-                        ],
-                    }],
-                )
-                snapshot_id = response["SnapshotId"]
-                snapshot_map[vol_id] = snapshot_id
-
-                await set_status(redis, job_id, "snapshot_creation_initiated", {
-                    "volume_id": vol_id,
-                    "snapshot_id": snapshot_id,
-                    "instance_id": instance_id
-                })
-
-            except ClientError as e:
-                await set_status(redis, job_id, "failed", {"volume_id": vol_id, "error": str(e), "instance_id": instance_id})
-                raise
-
-        await set_status(redis, job_id, "all_snapshots_started", {"snapshots": snapshot_map, "instance_id": instance_id})
-
-        pending_snapshots = set(snapshot_map.values())
-
-        while pending_snapshots:
-            await asyncio.sleep(120)  # 2 minutes
-            resp = await ec2.describe_snapshots(SnapshotIds=list(pending_snapshots))
-
-            for snap in resp["Snapshots"]:
-                sid = snap["SnapshotId"]
-                state = snap["State"]
-                progress = snap.get("Progress", "0%")
-
-                await set_status(redis, job_id, "snapshot_progress", {
-                    "snapshot_id": sid,
-                    "state": state,
-                    "progress": progress,
+async def create_volume_from_snapshot_in_demo_account(nkashesnapshotId, job_id=None, case_number=None, instance_id=None, redis=None, account_id=None, availability_zone='us-east-1b', volume_type='gp2', attach_instance_id=None):
+    """Create a new volume in the demo account from the given snapshot, only if the snapshot is completed. Logs progress with set_status. Optionally attach to an instance."""
+    # Log start
+    if redis and job_id:
+        await set_status(redis, job_id, account_id, case_number, "volume_creation_started in nkase demo", {
+            "instance_id": instance_id,
+            "snapshot_id": nkashesnapshotId,
+            "status": f"Starting volume creation from snapshot {nkashesnapshotId}"
+        })
+    demo_session = await get_nkase_demo_session(nkase_role_arn)
+    async with demo_session.client("ec2", region_name=region) as ec2_demo:
+        # Check snapshot state
+        snap_status = await ec2_demo.describe_snapshots(SnapshotIds=[nkashesnapshotId])
+        snap_state = snap_status["Snapshots"][0]["State"]
+        if redis and job_id:
+            await set_status(redis, job_id, account_id, case_number, "volume_creation_progress", {
+                "instance_id": instance_id,
+                "snapshot_id": nkashesnapshotId,
+                "status": f"Snapshot state in demo account: {snap_state}"
+            })
+        if snap_state == 'completed':
+            if redis and job_id:
+                await set_status(redis, job_id, account_id, case_number, "volume_creation_progress", {
                     "instance_id": instance_id,
-                    "volume_id": next((v for v, s in snapshot_map.items() if s == sid), None)
+                    "snapshot_id": nkashesnapshotId,
+                    "status": f"Creating volume from snapshot {nkashesnapshotId} in {availability_zone}..."
                 })
+            vol_response = await ec2_demo.create_volume(
+                AvailabilityZone=availability_zone,
+                SnapshotId=nkashesnapshotId,
+                VolumeType=volume_type
+            )
+            volume_id = vol_response['VolumeId']
+            if redis and job_id:
+                await set_status(redis, job_id, account_id, case_number, "volume_creation_completed", {
+                    "instance_id": instance_id,
+                    "snapshot_id": nkashesnapshotId,
+                    "volume_id": volume_id,
+                    "status": f"Created new volume {volume_id} from snapshot {nkashesnapshotId} in {availability_zone}"
+                })
+            print(f"[VOLUME] Created new volume {volume_id} from snapshot {nkashesnapshotId} in {availability_zone}")
+            # Optionally attach to an instance if attach_instance_id is provided
+            if attach_instance_id:
+                await attach_volume_to_instance_in_demo_account(volume_id, attach_instance_id, redis=redis, job_id=job_id, case_number=case_number, account_id=account_id)
+            return volume_id
+        else:
+            if redis and job_id:
+                await set_status(redis, job_id, account_id, case_number, "volume_creation_skipped", {
+                    "instance_id": instance_id,
+                    "snapshot_id": nkashesnapshotId,
+                    "status": f"Snapshot {nkashesnapshotId} is not completed (state: {snap_state}), skipping volume creation."
+                })
+            print(f"[VOLUME] Snapshot {nkashesnapshotId} is not completed (state: {snap_state}), skipping volume creation.")
+            return None
 
-                if state == "completed":
-                    pending_snapshots.discard(sid)
+async def attach_volume_to_instance_in_demo_account(FSVolId, instance_id, redis=None, job_id=None, case_number=None, account_id=None):
+    """Attach a volume to an instance in the demo account, log all steps and status. Wait for attachment to complete before proceeding."""
+    import asyncio
+    try:
+        if redis and job_id:
+            await set_status(redis, job_id, account_id, case_number, "attach_volume_started", {
+                "instance_id": instance_id,
+                "volume_id": FSVolId,
+                "status": f"Starting attach volume {FSVolId} to instance {instance_id}"
+            })
+        demo_session = await get_nkase_demo_session(nkase_role_arn)
+        async with demo_session.client("ec2", region_name=region) as ec2_demo:
+            # Check volume status
+            vol_status = await ec2_demo.describe_volume_status(VolumeIds=[FSVolId])
+            status = vol_status["VolumeStatuses"][0]["VolumeStatus"]["Status"]
+            if redis and job_id:
+                await set_status(redis, job_id, account_id, case_number, "attach_volume_progress", {
+                    "instance_id": instance_id,
+                    "volume_id": FSVolId,
+                    "status": f"Volume status: {status}"
+                })
+            if status == 'ok':
+                # Get block device mappings
+                volumes = await ec2_demo.describe_instance_attribute(InstanceId=instance_id, Attribute='blockDeviceMapping')
+                voluemsList = volumes['BlockDeviceMappings']
+                print("volumes are -->", voluemsList)
+                existDeviceNameList = [item['DeviceName'] for item in voluemsList]
+                print('device lists are :', existDeviceNameList)
+                appendDevice = '/dev/sd'
+                getDeviceLastCol = chr(102 + len(existDeviceNameList))
+                attachDevice = appendDevice + getDeviceLastCol
+                print('AttachDevice', attachDevice)
+                # Attach the volume
+                attach_resp = await ec2_demo.attach_volume(
+                    Device=attachDevice,
+                    InstanceId=instance_id,
+                    VolumeId=FSVolId
+                )
+                # Wait for attachment state to become 'attached'
+                max_wait = 120  # seconds
+                poll_interval = 5
+                waited = 0
+                while waited < max_wait:
+                    vol_info = await ec2_demo.describe_volumes(VolumeIds=[FSVolId])
+                    attachments = vol_info['Volumes'][0].get('Attachments', [])
+                    if attachments and attachments[0].get('State') == 'attached':
+                        break
+                    await asyncio.sleep(poll_interval)
+                    waited += poll_interval
+                else:
+                    if redis and job_id:
+                        await set_status(redis, job_id, account_id, case_number, "attach_volume_timeout", {
+                            "instance_id": instance_id,
+                            "volume_id": FSVolId,
+                            "status": f"Timed out waiting for volume {FSVolId} to attach."
+                        })
+                    print(f"[VOLUME] Timed out waiting for volume {FSVolId} to attach.")
+                    return None
+                # Now attachment is complete, compute device path
+                EBSAttachedDevicePath = 'xvd' + getDeviceLastCol + '1'
+                if redis and job_id:
+                    await set_status(redis, job_id, account_id, case_number, "attach_volume_device_path", {
+                        "instance_id": instance_id,
+                        "volume_id": FSVolId,
+                        "device_path": EBSAttachedDevicePath,
+                        "status": f"Volume {FSVolId} attached as {EBSAttachedDevicePath}"
+                    })
+                print(f"[VOLUME] Volume {FSVolId} attached as {EBSAttachedDevicePath}")
+                if redis and job_id:
+                    await set_status(redis, job_id, account_id, case_number, "attach_volume_completed", {
+                        "instance_id": instance_id,
+                        "volume_id": FSVolId,
+                        "device": attachDevice,
+                        "status": f"Attached volume {FSVolId} to instance {instance_id} as {attachDevice}"
+                    })
+                print(f"[VOLUME] Attached volume {FSVolId} to instance {instance_id} as {attachDevice}")
+                return attach_resp
+            else:
+                if redis and job_id:
+                    await set_status(redis, job_id, account_id, case_number, "attach_volume_skipped", {
+                        "instance_id": instance_id,
+                        "volume_id": FSVolId,
+                        "status": f"Volume {FSVolId} is not ready (status: {status}), skipping attach."
+                    })
+                print(f"[VOLUME] Volume {FSVolId} is not ready (status: {status}), skipping attach.")
+                return None
+    except Exception as e:
+        if redis and job_id:
+            await set_status(redis, job_id, account_id, case_number, "attach_volume_failed", {
+                "instance_id": instance_id,
+                "volume_id": FSVolId,
+                "status": f"Failed to attach volume: {str(e)}"
+            })
+        print(f"[VOLUME] Failed to attach volume {FSVolId} to instance {instance_id}: {e}")
+        return None
 
-        await set_status(redis, job_id, "completed", {"snapshots": snapshot_map, "instance_id": instance_id})
-
-    return [{"volume_id": v, "snapshot_id": s} for v, s in snapshot_map.items()]

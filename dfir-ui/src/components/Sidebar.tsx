@@ -52,7 +52,7 @@ export default function Sidebar() {
           <div className="bg-cyan-400 p-2 rounded-xl">
             <Shield className="text-white w-5 h-5" />
           </div>
-          <h1 className="text-xl font-semibold">DFIR Platform</h1>
+          <h1 className="text-xl font-semibold"> NKASE </h1>
         </div>
 
         {/* New Investigation Button */}

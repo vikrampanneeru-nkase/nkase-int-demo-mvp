@@ -5,14 +5,14 @@ import { fetcher } from "@/api/fetcher";
 
 type InProgressData = {
   in_progress_count: number;
-  job_ids: string[];
+  case_numbers: string[];
 };
 
 export default function Header() {
   const [showTooltip, setShowTooltip] = useState(false);
 
   const {
-    data = { in_progress_count: 0, job_ids: [] },
+    data = { in_progress_count: 0, case_numbers: [] },
     isLoading,
     error,
   } = useQuery<InProgressData>({
@@ -48,11 +48,11 @@ export default function Header() {
               )}
             </div>
 
-            {showTooltip && data.job_ids.length > 0 && (
+            {showTooltip && data.case_numbers.length > 0 && (
               <div className="absolute top-6 right-0 bg-white text-black shadow-lg rounded-md text-xs z-50 p-2 w-60">
                 <p className="font-semibold mb-2 text-gray-700">In-Progress Job IDs:</p>
                 <ul className="space-y-1 max-h-40 overflow-y-auto">
-                  {data.job_ids.map((id) => (
+                  {data.case_numbers.map((id) => (
                     <li key={id} className="break-all">
                       {id}
                     </li>
@@ -71,4 +71,5 @@ export default function Header() {
     </>
   );
 }
+
 

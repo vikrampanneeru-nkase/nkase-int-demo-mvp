@@ -1,0 +1,84 @@
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import get_db
+from app.models.action_job_detail import ActionJobDetail
+import json
+import asyncio
+
+router = APIRouter()
+
+@router.websocket("/investigations/nkase/logs")
+async def websocket_malware_logs(
+    websocket: WebSocket,
+    db: AsyncSession = Depends(get_db)
+):
+    await websocket.accept()
+
+    try:
+        case_number = websocket.query_params.get("case_number")
+        if not case_number:
+            await websocket.send_text(json.dumps({"error": "Missing case_number query parameter"}))
+            await websocket.close()
+            return
+
+        last_id = None
+        print(f"[WebSocket] Connected: case_number={case_number}")
+
+        while True:
+            if websocket.client_state.name != "CONNECTED":
+                print(f"[WebSocket] Client not connected anymore for case: {case_number}")
+                break
+
+            stmt = (
+                select(ActionJobDetail)
+                .where(ActionJobDetail.case_number == case_number)
+                .order_by(ActionJobDetail.timestamp)
+            )
+            result = await db.execute(stmt)
+            logs = result.scalars().all()
+
+            new_logs = [log for log in logs if last_id is None or log.id > last_id]
+            if new_logs:
+                for log in new_logs:
+                    payload = {
+                        "id": log.id,
+                        "job_id": str(log.job_id),
+                        "instance_id": log.instance_id,
+                        "snapshot_id": log.snapshot_id,
+                        "tenat_progress": log.tenat_progress,
+                        "volume_id": log.volume_id,
+                        "nkase_snapshot_id": log.nkase_snapshot_id,
+                        "nkase_snapshot_progress": log.nkase_snapshot_progress,
+                        "nkase_volume_id": log.nkase_volume_id,
+                        "action": log.action,
+                        "status": log.status,
+                        "stage": log.stage,
+                        "message": log.message,
+                        "details": log.details,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                        "case_number": log.case_number,
+                        "account_id": log.account_id,
+                        "errors": log.errors
+                    }
+
+                    # Filter out None/null values
+                    cleaned_payload = {
+                        k: v for k, v in payload.items() if v is not None
+                    }
+
+                    await websocket.send_text(json.dumps(cleaned_payload))
+
+                last_id = new_logs[-1].id
+
+            await asyncio.sleep(2)
+
+    except WebSocketDisconnect:
+        print(f"[WebSocket] Client disconnected for case_number={case_number}")
+    except Exception as e:
+        print(f"[WebSocket] Error for case_number={case_number}: {e}")
+        await websocket.send_text(json.dumps({"error": str(e)}))
+    finally:
+        await websocket.close()
+        print(f"[WebSocket] Connection closed for case_number={case_number}")
+

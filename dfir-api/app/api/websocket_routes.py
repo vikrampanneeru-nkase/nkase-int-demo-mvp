@@ -1,0 +1,151 @@
+# app/api/websocket_routes.py
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import get_db
+from app.models.action_job_detail import ActionJobDetail
+import json
+import asyncio
+import time
+import boto3
+
+async def fetch_log_file_from_ec2(instance_id: str, log_path: str):
+    ssm = boto3.client("ssm", region_name="us-east-1")
+    command = f"sudo tail -n 100 {log_path}"
+
+    response = ssm.send_command(
+        InstanceIds=[instance_id],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": [command]},
+    )
+
+    command_id = response["Command"]["CommandId"]
+    # Wait briefly then get result
+    import time
+    time.sleep(2)
+
+    result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+    return result["StandardOutputContent"]
+
+router = APIRouter()
+
+@router.websocket("/investigations/nkase/logs")
+async def websocket_malware_logs(
+    websocket: WebSocket,
+    db: AsyncSession = Depends(get_db)
+):
+    await websocket.accept()
+    
+    try:
+        # Get case number from query string
+        case_number = websocket.query_params.get("case_number")
+        if not case_number:
+            await websocket.send_text(json.dumps({"error": "Missing case_number query parameter"}))
+            await websocket.close()
+            return
+
+        last_id = None
+
+        while True:
+            stmt = (
+                select(ActionJobDetail)
+                .where(ActionJobDetail.case_number == case_number)
+                .order_by(ActionJobDetail.timestamp)
+            )
+            result = await db.execute(stmt)
+            logs = result.scalars().all()
+
+            # Filter only new logs
+            new_logs = [log for log in logs if last_id is None or log.id > last_id]
+            if new_logs:
+                for log in new_logs:
+                    await websocket.send_text(json.dumps({
+                        "instance_id": log.instance_id,
+                        "snapshot_id": log.snapshot_id,
+                        "tenat_progress": log.tenat_progress,
+                        "volume_id": log.volume_id,
+                        "nkase_snapshot_id": log.nkase_snapshot_id,
+                        "nkase_snapshot_progress": log.nkase_snapshot_progress,
+                        "nkase_volume_id": log.nkase_volume_id,
+                        "action": log.action,
+                        "status": log.status,
+                        "stage": log.stage,
+                        "message": log.message,
+                        "details": log.details,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                        "case_number": log.case_number,
+                        "account_id": log.account_id,
+                        "errors": log.errors
+                    }))
+                    # Stop fetching if the log matches the stop condition
+                    if log.case_number == case_number and log.stage == "nkase volume attached":
+                        # Call SSM send_command for ClamAV scan
+                        import boto3
+                        ssm_client = boto3.client('ssm', region_name='us-east-1')
+                        nkase_volume_id=log.nkase_volume_id
+                        log_path = f"/root/scan_report/scan_{case_number}.log"
+                        if nkase_volume_id and log_path :
+                            try:
+                                response = ssm_client.send_command(
+                                    InstanceIds=['i-0eb7ecdac5c4b8bcf'],
+                                    DocumentName="AWS-RunShellScript",
+                                    Parameters={
+                                        "commands": [f"sudo /root/nkase_scan_script.sh {nkase_volume_id} {case_number}"]
+                                    },
+                                    Comment="Trigger ClamAV scan via FastAPI",
+                                )
+                                command_id = response["Command"]["CommandId"]
+                                time.sleep(5)  # give some buffer for script to start
+                                print(f"[WebSocket] ClamAV scan command sent: {command_id}")
+                                try:
+                                    await websocket.send_text(json.dumps({
+                                        "message": f"ClamAV scan command sent successfully: {command_id}",
+                                        "log_path": log_path}))
+                                    while True:
+                                        content = await fetch_log_file_from_ec2('i-0eb7ecdac5c4b8bcf', log_path)
+                                        print(f"[WebSocket] Fetched log content: {content}")
+                                        new = content
+                                        if new.strip():
+                                            await websocket.send_text(json.dumps({"log_content": new}))
+                                            if "Finished At" in new:
+                                                print("Scan completed. Closing WebSocket.",new)
+                                                await asyncio.sleep(2)
+                                                await websocket.send_text(json.dumps({"info": "Log streaming finished."}))
+                                                await websocket.close()
+                                                return
+                                           
+                                        await asyncio.sleep(2)
+                                except Exception as e:
+                                    await websocket.send_text(f"Error: {str(e)}")
+                                    await websocket.close()
+                                            
+                                        
+                    
+                                except Exception as send_ex:
+                                    print(f"[WebSocket] Failed to send confirmation message: {send_ex}")
+                                    await websocket.close()
+                                    return
+
+                            except Exception as ssm_ex:
+                                print(f"[WebSocket] Failed to send ClamAV scan command: {ssm_ex}")
+                                await websocket.close()
+                                return
+                        else:
+                            print(f"[WebSocket] Missing instance_id, logpath, or device for ClamAV scan command.")
+                        await websocket.close()
+                        return
+                last_id = new_logs[-1].id
+            
+
+            await asyncio.sleep(2)
+
+
+    except WebSocketDisconnect:
+        print(f"[WebSocket] Client disconnected for case_number={case_number}")
+    except Exception as e:
+        await websocket.send_text(json.dumps({"error": str(e)}))
+        await websocket.close()
+
+
+

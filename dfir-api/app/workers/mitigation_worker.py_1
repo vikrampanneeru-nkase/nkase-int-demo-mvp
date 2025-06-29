@@ -1,13 +1,30 @@
-# app/workers/mitigation_worker.py
-from arq import Worker
 from arq.connections import RedisSettings
-from app.services.ec2_ops import create_snapshot
+import asyncio
+import sys
+# from app.helpers.status_updater import set_status
 
+async def mitigation_worker(ctx, instance_id: str, account_id: str, case_number: str, job_id: str):
+    redis = ctx["redis"]
+    from app.services.ebs_cross_account import create_snapshots,process_snapshot 
+    from app.services.nkase_cross_account import nkase_process_snapshot  # local import to avoid circular import at top level
 
-async def mitigation_worker(ctx, instance_id: str, job_id: str):
-    print(f"Starting mitigation worker for instance {instance_id} job {job_id}")
-    await create_snapshot(instance_id=instance_id, job_id=job_id)
+    # Commented out set_status calls for now
+    # await set_status(redis, job_id, account_id, case_number, "started", {"instance_id": instance_id})
+
+    try:
+        snapshot_map = await create_snapshots(instance_id=instance_id, job_id=job_id, redis=redis, case_number=case_number, account_id=account_id)
+        # For each volume_id and snapshot_id, call the next function sequentially (await for each)
+        for volume_id, snapshot_id in snapshot_map.items():
+            print(f"\033[94m[DEBUG] Processing volume_id={volume_id}, snapshot_id={snapshot_id}\033[0m", file=sys.stderr)
+            # Await and capture the returned snapshot_id from process_snapshot
+            result_snapshot_id = await process_snapshot(volume_id, snapshot_id, instance_id, job_id, redis, case_number, account_id)
+            print(f"\033[92m[DEBUG] Resulting snapshot_id for volume {volume_id}: {result_snapshot_id}\033[0m", file=sys.stderr)
+            await nkase_process_snapshot(result_snapshot_id,'i-0eb7ecdac5c4b8bcf', job_id, redis, case_number, account_id)
+    except Exception as e:
+        # await set_status(redis, job_id, account_id, case_number, "failed", {"instance_id": instance_id, "error": str(e)})
+        raise
 
 class WorkerSettings:
     functions = [mitigation_worker]
     redis_settings = RedisSettings(host="localhost", port=6379)
+

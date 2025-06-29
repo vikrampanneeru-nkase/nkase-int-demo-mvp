@@ -45,11 +45,14 @@ async def get_mitigated_jobs(db: AsyncSession = Depends(get_db)):
 #http://ec2-54-196-221-208.compute-1.amazonaws.com/api/dashboard/mitigations/in-progress/count
 @router.get("/mitigations/in-progress/count")
 async def get_not_completed_count(db: AsyncSession = Depends(get_db)):
+    # Get cases where status is not 'Completed' or 'Error'
+    from app.models.cases import Case
     result = await db.execute(
-    select(MitigationJob.job_id).where(MitigationJob.stage != "completed"))
-    job_ids = [row[0] for row in result.all()]
-
+        select(Case.case_number).where(~Case.status.in_(["Completed", "Error"]))
+    )
+    case_numbers = [row[0] for row in result.all()]
     return {
-    "in_progress_count": len(job_ids),
-    "job_ids": job_ids
+        "in_progress_count": len(case_numbers),
+        "case_numbers": case_numbers
     }
+

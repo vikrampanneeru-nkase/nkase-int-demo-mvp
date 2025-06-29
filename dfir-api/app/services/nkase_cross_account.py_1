@@ -1,0 +1,147 @@
+import asyncio
+import aioboto3
+import sys
+import string
+nkase_role_arn = "arn:aws:iam::483746227110:role/CrossAcctSnapshotCreator"
+region = "us-east-1"
+AVAILABLE_DEVICE_NAMES = [f"/dev/sd{chr(c)}" for c in range(ord('f'), ord('p')+1)]
+async def get_nkase_session():
+    base_session = aioboto3.Session()
+    async with base_session.client("sts") as sts:
+        response = await sts.assume_role(
+            RoleArn=nkase_role_arn,
+            RoleSessionName="NkaseSession"
+        )
+        credentials = response["Credentials"]
+    return aioboto3.Session(
+        aws_access_key_id=credentials["AccessKeyId"],
+        aws_secret_access_key=credentials["SecretAccessKey"],
+        aws_session_token=credentials["SessionToken"],
+    )
+
+async def nkase_process_snapshot(copiedsnapshot, instance_id, job_id, redis, case_number, account_id):
+    """
+    Nkase-side function to copy a shared snapshot, create a volume from it, and optionally attach to an instance.
+    """
+    print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Starting nkase_process_snapshot for snapshot {copiedsnapshot}\033[0m", file=sys.stderr)
+    session = await get_nkase_session()
+    async with session.client("ec2", region_name=region) as nakse_ec2:
+        print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Waiting for copied snapshot {copiedsnapshot} to complete...\033[0m", file=sys.stderr)
+        # Wait for the copied snapshot to complete
+        while True:
+            snap_status = await nakse_ec2.describe_snapshots(SnapshotIds=[copiedsnapshot])
+            snap_state = snap_status["Snapshots"][0]["State"]
+            print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Copied snapshot {copiedsnapshot} state: {snap_state}\033[0m", file=sys.stderr)
+            if snap_state == 'completed':
+                break
+            elif snap_state == 'error':
+                print(f"\033[91m[ERROR][Case {case_number}][Instance {instance_id}][Job {job_id}] Copied snapshot {copiedsnapshot} failed!\033[0m", file=sys.stderr)
+                return False
+            await asyncio.sleep(10)
+        print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Creating volume from snapshot {copiedsnapshot}...\033[0m", file=sys.stderr)
+        # Create a volume from the copied snapshot
+        vol_response = await nakse_ec2.create_volume(
+            AvailabilityZone=f"{region}a",  # You may want to make this dynamic
+            SnapshotId=copiedsnapshot,
+            VolumeType="gp2"
+        )
+        volume_id = vol_response["VolumeId"]
+        print(f"\033[92m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Created volume {volume_id} from snapshot {copiedsnapshot}\033[0m", file=sys.stderr)
+        # Optionally, you can attach the volume to an instance here
+        attach_response = await attach_volume_to_instance(nakse_ec2, volume_id, instance_id, case_number, job_id, copiedsnapshot)
+        print(f"\033[92m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Attach response: {attach_response}\033[0m", file=sys.stderr)
+        return volume_id
+
+async def attach_volume_to_instance(ec2_client, volume_id, instance_id, case_number=None, job_id=None, snapshot_id=None):
+    """
+    Attach a volume to an instance in the nkase account and wait for attachment to complete.
+    Implements retry logic for IncorrectState errors due to AWS eventual consistency.
+    """
+    import botocore
+    print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Waiting for volume {volume_id} (from snapshot {snapshot_id}) to be 'available' before attaching...\033[0m", file=sys.stderr)
+    # Wait for volume to be in 'available' state before attaching
+    await wait_until_volume_available(ec2_client, volume_id, case_number=case_number, job_id=job_id, instance_id=instance_id, snapshot_id=snapshot_id)
+    print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Volume {volume_id} is available, proceeding to attach...\033[0m", file=sys.stderr)
+    device_name = await get_available_device_name(ec2_client, instance_id)
+    max_retries = 6
+    backoff = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Attempt {attempt}: Attaching volume {volume_id} (from snapshot {snapshot_id}) to instance {instance_id} as {device_name}...\033[0m", file=sys.stderr)
+            attach_resp = await ec2_client.attach_volume(
+                Device=device_name,
+                InstanceId=instance_id,
+                VolumeId=volume_id
+            )
+            # Wait for attachment state to become 'attached'
+            max_wait = 60  # seconds
+            poll_interval = 5
+            waited = 0
+            while waited < max_wait:
+                vol_info = await ec2_client.describe_volumes(VolumeIds=[volume_id])
+                attachments = vol_info['Volumes'][0].get('Attachments', [])
+                if attachments and attachments[0].get('State') == 'attached':
+                    print(f"\033[92m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Volume {volume_id} (from snapshot {snapshot_id}) attached to instance {instance_id} as {device_name}\033[0m", file=sys.stderr)
+                    # Return detailed attachment info
+                    attachment = attachments[0]
+                    return {
+                        'device_name': device_name,
+                        'instance_id': instance_id,
+                        'volume_id': volume_id,
+                        'attachment_state': attachment.get('State'),
+                        'attach_time': str(attachment.get('AttachTime')),
+                        'delete_on_termination': attachment.get('DeleteOnTermination'),
+                        'attachment': attachment
+                    }
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+            print(f"\033[91m[ERROR][Case {case_number}][Instance {instance_id}][Job {job_id}] Timed out waiting for volume {volume_id} (from snapshot {snapshot_id}) to attach.\033[0m", file=sys.stderr)
+            return None
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'IncorrectState':
+                print(f"\033[93m[WARN][Case {case_number}][Instance {instance_id}][Job {job_id}] Attach attempt {attempt} failed with IncorrectState. Retrying in {backoff} seconds...\033[0m", file=sys.stderr)
+                await asyncio.sleep(backoff)
+                backoff *= 2
+                continue
+            else:
+                print(f"\033[91m[ERROR][Case {case_number}][Instance {instance_id}][Job {job_id}] Attach failed with unexpected error: {e}\033[0m", file=sys.stderr)
+                raise
+    print(f"\033[91m[ERROR][Case {case_number}][Instance {instance_id}][Job {job_id}] Failed to attach volume {volume_id} (from snapshot {snapshot_id}) to instance {instance_id} after {max_retries} attempts.\033[0m", file=sys.stderr)
+    return None
+
+async def wait_until_volume_available(ec2_client, volume_id, max_attempts=12, delay=5, case_number=None, job_id=None, instance_id=None, snapshot_id=None):
+    import sys
+    for attempt in range(max_attempts):
+        vol_info = await ec2_client.describe_volumes(VolumeIds=[volume_id])
+        state = vol_info['Volumes'][0]['State']
+        print(f"\033[94m[DEBUG][Case {case_number}][Instance {instance_id}][Job {job_id}] Attempt {attempt+1}: Volume {volume_id} (from snapshot {snapshot_id}) state: {state}\033[0m", file=sys.stderr)
+        if state == 'available':
+            return
+        await asyncio.sleep(delay)
+    raise TimeoutError(f"[Case {case_number}][Instance {instance_id}][Job {job_id}] Volume {volume_id} (from snapshot {snapshot_id}) did not reach 'available' state after {max_attempts * delay} seconds.")
+
+
+def get_device_name(volumes):
+
+    print("volumes are -->",volumes['BlockDeviceMappings'])
+    existDeviceNameList=[]
+    for item in volumes:
+        existDeviceNameList.append(item['DeviceName'])
+    print('device lists are :',existDeviceNameList)
+    appendDevice='/dev/sd'
+    getDeviceLastCol=chr(102+len(existDeviceNameList))
+    attachDevice=appendDevice+getDeviceLastCol
+    print('AttachDevice',attachDevice)
+    return attachDevice
+async def get_available_device_name(ec2_client, instance_id):
+    attached_devices = await get_attached_devices(ec2_client, instance_id)
+    for device in AVAILABLE_DEVICE_NAMES:
+        if device not in attached_devices:
+            return device
+    raise Exception("No available device name found.")
+async def get_attached_devices(ec2_client, instance_id):
+    response = await ec2_client.describe_instances(InstanceIds=[instance_id])
+    devices = response["Reservations"][0]["Instances"][0].get("BlockDeviceMappings", [])
+    return [device["DeviceName"] for device in devices]
+

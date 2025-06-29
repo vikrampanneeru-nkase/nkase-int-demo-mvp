@@ -1,0 +1,296 @@
+from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks
+from pydantic import BaseModel
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import uuid4
+from arq.connections import create_pool
+from fastapi import Request
+import json
+from fastapi import Request
+from app.services.ec2_ops import (
+    list_dynamodb_tables,
+    list_s3_buckets,
+    list_instances,
+    quarantine_instance,
+    un_quarantine_instance
+)
+from datetime import datetime
+
+from app.schemas.cases import CaseOut
+from app.models import Case, CaseTask, Report, TimelineEvent, Finding
+
+from app.db.database import get_db
+from app.workers.mitigation_worker import mitigation_worker
+from app.schemas.mitigation import MitigationResponse
+from fastapi import APIRouter, BackgroundTasks
+import uuid
+from app.models.action_job_detail import ActionJobDetail
+from app.schemas.action_job_detail import ActionJobDetailResponse
+from app.services.users import get_all_users
+STATUS_KEY_PREFIX = "snapshot_status:"
+router = APIRouter()
+from sqlalchemy import select
+from app.schemas.cases import CaseCreate
+
+from uuid import UUID
+import traceback
+
+# ----------- Models -----------
+
+class ActionRequest(BaseModel):
+    instance_ids: List[str]
+
+# ----------- Endpoints -----------
+
+
+
+@router.get("",response_model=List[CaseOut])
+async def get_investigations(db: AsyncSession = Depends(get_db)):
+    #return await list_instances(db)
+    result = await db.execute(select(Case))
+    cases = result.scalars().all()
+    return cases
+
+@router.get("/new")
+async def get_new_investigations(db: AsyncSession = Depends(get_db)):
+    return await list_instances(db)
+
+@router.get("/s3")
+async def get_s3_buckets():
+    return await list_s3_buckets()
+
+@router.get("/dynamodb")
+async def get_dynamodb():
+    return await list_dynamodb_tables()
+
+@router.post("/Quarantine")
+async def quarantine_instances(req: ActionRequest, db: AsyncSession = Depends(get_db)):
+    return await quarantine_instance(req.instance_ids, db)
+
+@router.post("/Un-Quarantine")
+async def unquarantine_instances(req: ActionRequest, db: AsyncSession = Depends(get_db)):
+    return await un_quarantine_instance(req.instance_ids, db)
+
+@router.get("/mitigation/status/{job_id}",response_model=List[ActionJobDetailResponse])
+async def mitigation_status(job_id:UUID, db: AsyncSession = Depends(get_db)):
+    stmt = select(ActionJobDetail).where(ActionJobDetail.job_id == job_id)
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+    
+    if not records:
+        raise HTTPException(status_code=404, detail="No action job details found for this job_id")
+    
+    return records
+@router.get("/{case_number}")
+async def get_case_details(case_number: str, session: AsyncSession = Depends(get_db)):
+    # Get case
+    result = await session.execute(select(Case).where(Case.case_number == case_number))
+    case = result.scalars().first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Get tasks
+    result = await session.execute(select(CaseTask).where(CaseTask.case_id == case_number))
+    tasks = result.scalars().all()
+
+    # Get reports
+    result = await session.execute(select(Report).where(Report.case_number == case_number))
+    reports = result.scalars().all()
+
+    # Get timeline events
+    result = await session.execute(select(TimelineEvent).where(TimelineEvent.case_number == case_number))
+    timeline = result.scalars().all()
+
+    # Get findings
+    result = await session.execute(select(Finding).where(Finding.case_number == case_number))
+    findings = result.scalars().all()
+
+    return {
+        "case": case,
+        "tasks": tasks,
+        "reports": reports,
+        "timeline": timeline,
+        "findings": findings
+    }
+
+
+
+@router.post("/cases/create")
+async def create_case(request: Request, db: AsyncSession = Depends(get_db)):
+    print("value are before construction", await request.json())
+    body = await request.json()
+
+    new_case = Case(
+        title=body.get("title"),
+        priority=body.get("priority", "Medium"),
+        status=body.get("status", "Open"),
+        assigned_to=body.get("accountName"),
+        instance_id=body.get("instanceId"),
+        resource_type=body.get("resourceType"),
+        cloud=body.get("cloud"),
+        accountId=body.get("accountId"),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow())
+    db.add(new_case)
+    await db.flush()       # This triggers insert and generates case_number
+    await db.refresh(new_case)  # Load auto-generated fields like case_number
+    await db.commit()
+
+    return {
+        "message": "Case created successfully",
+        "case_number": new_case.case_number,
+        "title": new_case.title,
+        "status": new_case.status,
+        "instance_id":new_case.instance_id
+    }
+
+
+    #assigned_to=payload.accountName
+    """
+    new_case = Case(
+        title=payload.title,
+        #description=payload.description,
+        priority=payload.priority,
+        status="Open",
+        assigned_to=payload.assigned_to,
+        #due_date=payload.due_date,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow()
+    )
+    print("values are ", new_case)
+    db.add(new_case)
+    await db.flush()       # Triggers the insert + calls the trigger
+    await db.refresh(new_case)
+    await db.commit()
+
+    return {
+        "message": "Case created successfully",
+        "case_number": new_case.case_number,
+        "title": new_case.title,
+        "status": new_case.status
+    }
+    """
+@router.get("/resources/available")
+async def get_all_resources(db: AsyncSession = Depends(get_db)):
+    # Run all async calls concurrently
+    from asyncio import gather
+
+    ec2_task = list_instances(db)
+    s3_task = list_s3_buckets()
+    dynamo_task = list_dynamodb_tables()
+    user_task = get_all_users(db)
+
+    ec2_data, s3_data, dynamo_data,users = await gather(ec2_task, s3_task, dynamo_task,user_task)
+
+    return {
+        "EC2": ec2_data,
+        "S3": s3_data,
+        "DynamoDB": dynamo_data,
+        "Users":users
+    }
+
+@router.get("/cases/open")
+async def get_open_cases(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Case).where(Case.status == "Open"))
+    open_cases = result.scalars().all()
+    return open_cases
+@router.post("/nkase/action")
+async def get_nkase_action(request: Request, session: AsyncSession = Depends(get_db)):
+    try:
+        body = await request.json()  # This returns a dict
+        case_number = body["case_number"]
+        action = body["action"]
+        result = await session.execute(select(Case).where(Case.case_number == case_number))
+        case = result.scalars().first()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        # Update status to 'In Progress'
+        case.status = "In Progress"
+        await session.commit()
+        await session.refresh(case)
+
+        # Add process details to CaseTask
+        from app.models.case_tasks import CaseTask
+        process_task = CaseTask(
+            case_id=case.case_number,
+            title=f"Malware Analysis Started",
+            description=f"Malware analysis process started for instance {case.instance_id} (Account: {case.accountId})",
+            status="In Progress",
+            priority=case.priority,
+            assigned_to=case.assigned_to,
+            notes=f"Instance ID: {case.instance_id}, Account ID: {case.accountId}",
+            created_at=case.created_at,
+            updated_at=datetime.utcnow(),
+            completed_at=None,
+            job_id=None  # Will update after job_id is generated
+        )
+        session.add(process_task)
+        await session.commit()
+        await session.refresh(process_task)
+
+        instanceid = getattr(case, 'instance_id', None)
+        accountId = getattr(case, 'accountId', None)
+        case_number = case.case_number
+        print(f"[DEBUG] Instance ID: {instanceid}, Account ID: {accountId}, Case Number: {case_number}")
+        if not instanceid or not accountId:
+            raise HTTPException(status_code=400, detail=f"Case is missing required fields: instance_id={instanceid}, accountId={accountId}")
+        try:
+            job_id = str(uuid.uuid4())
+            redis = await create_pool()
+            print(f"[DEBUG] Enqueuing mitigation_worker: {instanceid}, {accountId}, {case_number}, {job_id}")
+            await redis.enqueue_job("mitigation_worker", instanceid, accountId, case_number, job_id)
+            # Update process_task with job_id
+            process_task.job_id = job_id
+            await session.commit()
+            await session.refresh(process_task)
+            mitigation_response = f"Mitigation started for instance id: {instanceid} with job id: {job_id}"
+        except Exception as mit_ex:
+            print("[ERROR] Exception in mitigation_worker enqueue:")
+            traceback.print_exc()
+            # On mitigation failure, update CaseTask and case status
+            process_task.status = "Failed"
+            process_task.description += f"\nMalware analysis failed: for instance {case.instance_id} (Account: {case.accountId})"
+            process_task.updated_at = datetime.utcnow()
+            process_task.priority = case.priority
+            process_task.assigned_to = case.assigned_to
+            process_task.notes = f"Instance ID: {case.instance_id}, Account ID: {case.accountId}"
+            process_task.completed_at = None
+            case.status = "Error"
+            case.updated_at = datetime.utcnow()
+            await session.commit()
+            await session.refresh(process_task)
+            await session.refresh(case)
+            raise HTTPException(status_code=500, detail=f"Mitigation failed: {str(mit_ex)}")
+
+        return {
+            "case_number": case_number,
+            "action": action,
+            "mitigation_response": mitigation_response
+        }
+    except Exception as e:
+        print("[ERROR] Exception in /nkase/action endpoint:")
+        traceback.print_exc()
+        # On any exception, mark case status as 'Error' and update CaseTask if available
+        if 'case' in locals() and case:
+            case.status = "Error"
+            case.updated_at = datetime.utcnow()
+            await session.commit()
+        if 'process_task' in locals() and process_task:
+            process_task.status = "Failed"
+            process_task.description += f"\nAction failed: {str(e)}"
+            process_task.updated_at = datetime.utcnow()
+            process_task.priority = case.priority if 'case' in locals() and case else None
+            process_task.assigned_to = case.assigned_to if 'case' in locals() and case else None
+            process_task.notes = f"Instance ID: {case.instance_id}, Account ID: {case.accountId}" if 'case' in locals() and case else None
+            process_task.completed_at = None
+            await session.commit()
+            await session.refresh(process_task)
+        raise HTTPException(status_code=500, detail=f"Action failed: {str(e)}")
+#@router.post("/Mitigate")
+async def start_mitigation(instanceid: str, accountId: str,case_number:str):
+    job_id = str(uuid.uuid4())
+    redis = await create_pool()
+    await redis.enqueue_job("mitigation_worker", instanceid, accountId,case_number, job_id)
+    
+    return f"Mitigation started for instance id: {instanceid} with job id: {job_id}"

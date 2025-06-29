@@ -1,322 +1,451 @@
-import boto3
-from botocore.exceptions import ClientError
-import uuid
-import time
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.quarantine import QuarantinedInstance  # Removed or comment out if not used
-from sqlalchemy.future import select
-from sqlalchemy import update,and_
-ROLE_ARN = "arn:aws:iam::339751003344:role/CrossAccountEC2Access"
-ROLE_SESSION_NAME = "DFIRSession"
-
-def get_cross_account_session():
-    sts = boto3.client('sts')
-    try:
-        response = sts.assume_role(
-            RoleArn=ROLE_ARN,
-            RoleSessionName=ROLE_SESSION_NAME
-        )
-    except ClientError as e:
-        print(f"Error assuming role: {e}")
-        raise e
-
-    credentials = response['Credentials']
-    session = boto3.Session(
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken']
-    )
-    return session
-
+import aioboto3
 import asyncio
+import uuid
+from datetime import datetime
+from botocore.exceptions import ClientError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from app.models.quarantine import QuarantinedInstance
+from app.models.activity_log import ActivityLog
+from typing import List, Dict
+import json
+import random
+import datetime as dt
+from app.db.database import async_session_maker
+#from app.workers.mitigation_worker import _set_status
+from app.helpers.status_updater import set_status
 
-async def list_instances(db: AsyncSession):
-    session = get_cross_account_session()
-    ec2 = session.client("ec2", region_name="us-east-1")
+role_arn = "arn:aws:iam::339751003344:role/CrossAccountEC2Access"
+region = "us-east-1"
 
-    try:
-        response = ec2.describe_instances()
-    except ClientError as e:
-        print(f"Error describing instances: {e}")
-        raise e
+BACKOFF_MAX = 5
+BACKOFF_BASE = 2
+SNAP_POLL_SECS =90   # 3 minutes
+STATUS_KEY_PREFIX = "snapshot_status:"
 
-    instances = []
+async def get_cross_account_session(role_arn: str):
+    base_session = aioboto3.Session()
+    async with base_session.client("sts") as sts:
+        response = await sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName="DFIRSession"
+        )
+        credentials = response["Credentials"]
+    return aioboto3.Session(
+        aws_access_key_id=credentials["AccessKeyId"],
+        aws_secret_access_key=credentials["SecretAccessKey"],
+        aws_session_token=credentials["SessionToken"],
+    )
 
-    for reservation in response.get('Reservations', []):
-        for instance in reservation.get('Instances', []):
-            volume_ids = []
-            for block in instance.get('BlockDeviceMappings', []):
-                ebs = block.get('Ebs')
-                if ebs and 'VolumeId' in ebs:
-                    volume_ids.append(ebs['VolumeId'])
 
-            security_groups = [{
-                "GroupId": sg.get("GroupId"),
-                "GroupName": sg.get("GroupName")}
-            for sg in instance.get("SecurityGroups", [])
-            ]
+async def get_account_id(session):
+    async with session.client("sts") as sts_client:
+        identity = await sts_client.get_caller_identity()
+        return identity["Account"]
 
-            is_quarantined = await is_instance_quarantined(
-                db,
-                instance.get("InstanceId"),
-                session.client('sts').get_caller_identity().get('Account'),
-                instance.get('VpcId') 
-            )
 
-            instance_data = {
-                "InstanceId": instance.get("InstanceId"),
-                "InstanceType": instance.get("InstanceType"),
-                "State": instance.get("State", {}).get("Name"),
-                "PublicIpAddress": instance.get("PublicIpAddress"),
-                "PrivateIpAddress": instance.get("PrivateIpAddress"),
-                "AvailabilityZone": instance.get("Placement", {}).get("AvailabilityZone"),
-                "Tags": instance.get("Tags", []),
-                "VolumeIds": volume_ids,
-                "SecurityGroups": security_groups,
-                "is_quarantined": is_quarantined,
-            }
+async def get_ec2_client(session):
+    return await session.client("ec2", region_name=region).__aenter__()
 
-            instances.append(instance_data)
-            print("instance are", instances)
 
-    return instances
+async def identify_instance_vpc_id(ec2, instance_id: str):
+    response = await ec2.describe_instances(InstanceIds=[instance_id])
+    return response["Reservations"][0]["Instances"][0]["VpcId"]
 
-async def is_instance_quarantined(db: AsyncSession, instance_id: str, account_id: str, vpc_id: str) -> bool:
+
+async def get_or_create_security_group(ec2, vpc_id: str, suffix: str):
+    name = f"ISOLATE SG NKASE-{suffix}"
+    response = await ec2.describe_security_groups(
+        Filters=[
+            {"Name": "group-name", "Values": [name]},
+            {"Name": "vpc-id", "Values": [vpc_id]}
+        ]
+    )
+    if response['SecurityGroups']:
+        return response['SecurityGroups'][0], False
+
+    new_sg = await ec2.create_security_group(
+        Description='SG for quarantine isolation',
+        GroupName=name,
+        VpcId=vpc_id
+    )
+    return new_sg, True
+
+
+async def revoke_egress_rules(ec2, sg_id: str):
+    await ec2.revoke_security_group_egress(
+        GroupId=sg_id,
+        IpPermissions=[{
+            'IpProtocol': '-1',
+            'IpRanges': [{'CidrIp': '0.0.0.0/0'}],
+        }]
+    )
+
+
+async def is_instance_quarantined(db: AsyncSession, instance_id: str, account_id: str, vpc_id: str):
     stmt = select(QuarantinedInstance.is_quarantined).where(
         QuarantinedInstance.instance_id == instance_id,
         QuarantinedInstance.account_id == account_id,
-        QuarantinedInstance.vpc_id == vpc_id,
+        QuarantinedInstance.vpc_id == vpc_id
     )
     result = await db.execute(stmt)
-    is_quarantined_value = result.scalar_one_or_none()
-    print("is_quarantined_value is ", is_quarantined_value)
-    if is_quarantined_value is not None:
-        print(f"Instance {instance_id} is quarantined: {is_quarantined_value}")
-    else:
-        print(f"Instance {instance_id} is not quarantined.")
-    return is_quarantined_value if is_quarantined_value is not None else False
+    return result.scalar_one_or_none() or False
 
 
-async def quarantine_instance(instance_ids: list, db: AsyncSession) -> list:
-    # Dummy implementation - replace with actual logic
+async def list_instances(db: AsyncSession):
+    # Assume the cross-account role and get a session
+    session = await get_cross_account_session(role_arn)
+
+    # Optionally get the account ID if you want to use or log it
+    account_id = await get_account_id(session)
+    print(f"Listing instances in account: {account_id}")
+
+    # Use the session to create an EC2 client and call describe_instances
+    async with session.client("ec2", region_name="us-east-1") as ec2:
+        response = await ec2.describe_instances()
+    instances = []
+
+    for reservation in response.get("Reservations", []):
+        for instance in reservation.get("Instances", []):
+            volume_ids = [bd["Ebs"]["VolumeId"]
+                          for bd in instance.get("BlockDeviceMappings", [])
+                          if "Ebs" in bd]
+
+            security_groups = [
+                {"GroupId": sg["GroupId"], "GroupName": sg["GroupName"]}
+                for sg in instance.get("SecurityGroups", [])
+            ]
+            print(f"security_groups are {security_groups}")
+
+            is_quarantined = await is_instance_quarantined(
+                db, instance["InstanceId"], account_id, instance["VpcId"]
+            )
+
+            instances.append({
+                "InstanceId": instance["InstanceId"],
+                "InstanceType": instance["InstanceType"],
+                "State": instance["State"]["Name"],
+                "PublicIpAddress": instance.get("PublicIpAddress"),
+                "PrivateIpAddress": instance.get("PrivateIpAddress"),
+                "AvailabilityZone": instance["Placement"]["AvailabilityZone"],
+                "Tags": instance.get("Tags", []),
+                "VolumeIds": volume_ids,
+                "SecurityGroups": security_groups,
+                "is_quarantined": is_quarantined
+            })
+
+    return instances
+
+
+async def quarantine_instance(instance_ids: list, db: AsyncSession):
     results = []
-    for instance_id in instance_ids:
-        print(f"Quarantining instance {instance_id} ")
-        session = get_cross_account_session()
-        ec2 = session.client("ec2",region_name="us-east-1")
-        try:
-            vpcID = identifyInstanceVpcId(instance_id,ec2)
-            print("vpc id:-->",vpcID)
-            instanceAttributes = ec2.describe_instances(InstanceIds=[instance_id])
-            network_interface = instanceAttributes['Reservations'][0]['Instances'][0]['NetworkInterfaces'][0]
-            networkInterfaceID = network_interface['NetworkInterfaceId']
-            security_groups = network_interface['Groups']
+    session = await get_cross_account_session(role_arn)
+    ec2 = await get_ec2_client(session)
+    account_id = await get_account_id(session)
 
-            #print("instanceAttributes----",instanceAttributes)
-            untrackSG,track = get_or_create_security_group(vpcID, 'tmp',ec2)
-            if track:
-                print("untrackSG--->",untrackSG)
-                untrackSecurityGroup(untrackSG,ec2)
-            print("untrackSG----->",untrackSG)
-            #creating a new security group for tracking
-            unique_id = str(uuid.uuid4())
-            trackSG,status = get_or_create_security_group(vpcID, unique_id,ec2)
-            print("trackSG is ",trackSG)
-            #revoking the outbound rules of the new security group to end the comunication with anything
-            revokeOutRules(0, trackSG['GroupId'],ec2)
-            print("untrackSG['GroupId']---",untrackSG['GroupId'])
-            #attaching the untrack security group on ec2 instance
-            ec2.modify_network_interface_attribute(NetworkInterfaceId=networkInterfaceID, Groups=[untrackSG['GroupId']])
-            time.sleep(60)
-            print("trackSG['GroupId']-----",trackSG['GroupId'])
-            #attaching the track security group with no inbound and outbound rules
-            ec2.modify_network_interface_attribute(NetworkInterfaceId=networkInterfaceID, Groups=[trackSG['GroupId']])
-            status = "Quarantained Success"
-            
+    for instance_id in instance_ids:
+        try:
+            vpc_id = await identify_instance_vpc_id(ec2, instance_id)
+            instance = (await ec2.describe_instances(InstanceIds=[instance_id]))["Reservations"][0]["Instances"][0]
+            nic_id = instance["NetworkInterfaces"][0]["NetworkInterfaceId"]
+            security_groups = instance["NetworkInterfaces"][0]["Groups"]
+
+            quarantine_sg_name = str(uuid.uuid4())
+            quarantine_sg, created = await get_or_create_security_group(ec2, vpc_id, quarantine_sg_name)
+
+            await revoke_egress_rules(ec2, quarantine_sg["GroupId"])
+            await ec2.modify_network_interface_attribute(
+                NetworkInterfaceId=nic_id,
+                Groups=[quarantine_sg["GroupId"]]
+            )
+
             for sg in security_groups:
                 db.add(QuarantinedInstance(
-                account_id=session.client('sts').get_caller_identity().get('Account'),
-                instance_id=instance_id,
-                vpc_id=vpcID,
-                nic_id=networkInterfaceID,
-                existing_security_group=sg["GroupId"],
-                quarantine_security_group=trackSG['GroupId'],
-                is_quarantined=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-
+                    account_id=account_id,
+                    instance_id=instance_id,
+                    vpc_id=vpc_id,
+                    nic_id=nic_id,
+                    existing_security_group=sg["GroupId"],
+                    quarantine_security_group=quarantine_sg["GroupId"],
+                    is_quarantined=True,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
                 ))
-            await db.commit()        
+
+            await db.commit()
+            db.add(ActivityLog(id=uuid.uuid4(),account_id=account_id,instance_id=instance_id,vpc_id=vpc_id,
+                               action="Isolate",
+                    status="success",message="isolate successful",
+                                 performed_at=datetime.utcnow()
+                    ))
+            await db.commit()
+            results.append(f"Isolate success: {instance_id}")
+
         except ClientError as e:
             error_message = e.response['Error']['Message']
-            error_code = e.response['Error']['Code']
-            print(f"[ERROR] Failed to quarantine instance {instance_id}: {error_code} - {error_message}")
-            status = f"Quarantine Failed: {error_code}"
-
-        results.append(f"status : {status}  for Instance id : {instance_id}")
-    return results
-
-def mitigate_instance(instance_id: str):
-    # Dummy implementation - replace with actual logic
-    print(f"Mitigating instance {instance_id} (dummy)")
-    return {"status": "mitigated", "instance_id": instance_id}
-def identifyInstanceVpcId(instanceId,ec2Client):
-    instanceReservations = ec2Client.describe_instances(InstanceIds=[instanceId])['Reservations']
-    for instanceReservation in instanceReservations:
-        instancesDescription = instanceReservation['Instances']
-        for instance in instancesDescription:
-            return instance['VpcId']
-        
-def createSecurityGroup(vpcID, string,ec2Client):
-    newSecurityGroup = ec2Client.create_security_group(
-        Description='Security Group created by Quarantince of Instance',
-        GroupName='ISOLATE SG NKASE-{}'.format(string),
-        VpcId=vpcID,)
-    print("newSecurityGroup is ",newSecurityGroup)
-    return newSecurityGroup
-def get_or_create_security_group(vpc_id, group_name, ec2):
-    try:
-        group_name_check = 'ISOLATE SG NKASE-{}'.format(group_name)
-        response = ec2.describe_security_groups(
-            Filters=[
-                {"Name": "group-name", "Values": [group_name_check]},
-                {"Name": "vpc-id", "Values": [vpc_id]}
-            ]
-        )
-        print("response is from create security group",response)
-        if response['SecurityGroups']:
-            print(f"Security Group '{group_name}' already exists. Reusing it.")
-            return response['SecurityGroups'][0],False
-        else:
-            return createSecurityGroup(vpc_id, group_name, ec2), True
-    except ClientError as e:
-        print("Error checking existing SG:", e)
-
-def untrackSecurityGroup(securityGroup,ec2Client):
-    ec2Client.authorize_security_group_ingress(
-        GroupId=securityGroup['GroupId'],
-        IpPermissions=[
-            {
-                'FromPort': -1,
-                'IpProtocol': '-1',
-                'IpRanges': [
-                    {
-                        'CidrIp': '0.0.0.0/0',
-                        'Description': 'untracked access',
-                    },
-                ],
-                'ToPort': -1,
-            },
-        ],
-    )
-def revokeOutRules(boolean, sgID,ec2Client):
-    if boolean == 0:
-        ec2Client.revoke_security_group_egress(
-            GroupId=sgID,
-            IpPermissions=[
-                {
-                    'IpProtocol': '-1',  # All protocols
-                    'IpRanges': [
-                        {
-                            'CidrIp': '0.0.0.0/0'
-                        }
-                    ]
-                }
-            ]
-        )
-
-async def un_quarantine_instance(instance_ids: list, db: AsyncSession) -> list:
-    # Dummy implementation - replace with actual logic
-    results = []
-
-    for instance_id in instance_ids:
-        print(f"Unquarantining instance {instance_id}...")
-
-        session = get_cross_account_session()
-        sts_client = session.client('sts')
-        ec2 = session.client("ec2", region_name="us-east-1")
-        account_id = sts_client.get_caller_identity().get('Account')
-
-        try:
-            vpc_id = identifyInstanceVpcId(instance_id, ec2)
-            print("VPC ID -->", vpc_id)
-
-            instance_attributes = ec2.describe_instances(InstanceIds=[instance_id])
-            network_interface = instance_attributes['Reservations'][0]['Instances'][0]['NetworkInterfaces'][0]
-            nic_id = network_interface['NetworkInterfaceId']
-            current_groups = [sg["GroupId"] for sg in network_interface["Groups"]]
-            print("from the list Security Groups:", current_groups)
-            current_group = current_groups[0]
-           
-            if not current_groups:
-                results.append(f"Instance {instance_id} has no security groups to unquarantine")
-                continue
-            print("Network Interface ID:", nic_id)
-            print("Current Security Groups converted String:", current_group)
 
             
+            db.add(ActivityLog(
+                id=uuid.uuid4(),
+                account_id=account_id,
+                instance_id=instance_id,
+                vpc_id=vpc_id,
+                action="Isolate",
+                status="failed",
+                message=error_message,
+                performed_at=datetime.utcnow()
+            ))
 
-            # Fetch quarantined instance record from DB
+            await db.commit()
+            results.append(f"Isolate failed: {instance_id} - {error_message}")
+
+    return results
+
+
+async def un_quarantine_instance(instance_ids: list, db: AsyncSession):
+    results = []
+    session = await get_cross_account_session(role_arn)
+    ec2 = await get_ec2_client(session)
+    account_id = await get_account_id(session)
+
+    for instance_id in instance_ids:
+        try:
+            vpc_id = await identify_instance_vpc_id(ec2, instance_id)
+            instance = (await ec2.describe_instances(InstanceIds=[instance_id]))["Reservations"][0]["Instances"][0]
+            nic_id = instance["NetworkInterfaces"][0]["NetworkInterfaceId"]
+            current_groups = [sg["GroupId"] for sg in instance["NetworkInterfaces"][0]["Groups"]]
+
             stmt = select(QuarantinedInstance).where(
                 QuarantinedInstance.account_id == account_id,
                 QuarantinedInstance.vpc_id == vpc_id,
                 QuarantinedInstance.instance_id == instance_id,
-                QuarantinedInstance.quarantine_security_group==current_group
+                QuarantinedInstance.quarantine_security_group == current_groups[0]
             )
             result = await db.execute(stmt)
-            instance = result.scalar_one_or_none()
+            print("results are from db",result)
+            q_record = result.scalar_one_or_none()
 
-            if not instance:
-                results.append(f"Instance {instance_id} not found in quarantine records")
+            if not q_record:
+                results.append(f"{instance_id} not found in quarantine records")
                 continue
 
-            quarantine_sg = instance.quarantine_security_group
-            existing_sg = instance.existing_security_group
-            print("Quarantine Security Group:", quarantine_sg)
-            print("Existing Security Group:", existing_sg)        
-
-            # Swap security groups: remove quarantine SG, add existing SG
-            #if quarantine_sg in current_groups:
-            #    current_groups.remove(quarantine_sg)
-            #if existing_sg not in current_groups:
-            #    current_groups.append(existing_sg)
-            #print("Updated Security Groups:", current_groups)
-            
-            
-
-            ec2.modify_network_interface_attribute(
+            await ec2.modify_network_interface_attribute(
                 NetworkInterfaceId=nic_id,
-                Groups=[existing_sg]
+                Groups=[q_record.existing_security_group]
             )
 
-            # Update DB to reflect unquarantined state
-            await db.execute(
-                update(QuarantinedInstance)
-                    .where(
-                        and_(
-                            QuarantinedInstance.account_id == account_id,
-                            QuarantinedInstance.vpc_id == vpc_id,
-                            QuarantinedInstance.instance_id == instance_id,
-                            QuarantinedInstance.quarantine_security_group == quarantine_sg
-                        )
-                    )
-                    .values(
-                        is_quarantined=False,
-                        quarantine_security_group=None,
-                        updated_at=datetime.utcnow()
-                    )
-                )
+            await db.delete(q_record)
+            db.add(ActivityLog(
+                id=uuid.uuid4(),
+                account_id=account_id,
+                instance_id=instance_id,
+                vpc_id=vpc_id,
+                action="deisolate",
+                status="success",
+                message="deisolate successful",
+                performed_at=datetime.utcnow()
+            ))
+
             await db.commit()
-            
-            results.append(f"Status: Unquarantined Successfully for instance {instance_id}")
+            results.append(f"De-isolate success: {instance_id}")
 
         except ClientError as e:
             error_message = e.response['Error']['Message']
-            error_code = e.response['Error']['Code']
-            print(f"[ERROR] Failed to unquarantine instance {instance_id}: {error_code} - {error_message}")
-            results.append(f"Status: Unquarantine Failed for {instance_id}: {error_code}")
+
+           
+            db.add(ActivityLog(
+                id=uuid.uuid4(),
+                account_id=account_id,
+                instance_id=instance_id,
+                vpc_id=vpc_id,
+                action="deisolate",
+                status="failed",
+                message=error_message,
+                performed_at=datetime.utcnow()
+            ))
+
+            await db.commit()
+            results.append(f"De-isolate failed: {instance_id} - {error_message}")
 
     return results
+async def mitigate_instance(instance_ids: list[str], db):
+    # Dummy logic for now
+    print(f"Mitigating instances in ec2_ops: {instance_ids}")
+    return {"detail": f"Successfully mitigated {len(instance_ids)} instance(s)."}
+
+async def list_s3_buckets():
+    session = await get_cross_account_session(role_arn)
+    account_id = await get_account_id(session)
+    print(f"Listing buckets in account: {account_id}")
+
+    async with session.client("s3", region_name="us-east-1") as s3:
+        response = await s3.list_buckets()
+        buckets = response.get('Buckets', [])
+
+        result = []
+        for bucket in buckets:
+            name = bucket["Name"]
+            created = bucket.get("CreationDate")
+
+            # Get region (optional but recommended)
+            try:
+                loc_response = await s3.get_bucket_location(Bucket=name)
+                region = loc_response.get("LocationConstraint") or "us-east-1"
+            except Exception as e:
+                print(f"Failed to get region for {name}: {e}")
+                region = "unknown"
+
+            result.append({
+                "Name": name,
+                "Region": region,
+                "CreationDate": created.isoformat() if isinstance(created, dt.datetime) else str(created)
+            })
+
+        return result
+    
+async def list_dynamodb_tables():
+    session = await get_cross_account_session(role_arn)
+    account_id = await get_account_id(session)
+    print(f"Listing instances in account: {account_id}")
+    async with session.client("dynamodb", region_name="us-east-1") as dynamodb:
+        response = await dynamodb.list_tables()
+        tables = response.get('TableNames', [])
+        return tables
 
 
+async def create_snapshot_for_volume(ec2, redis, job_id, instance_id, vol_id, account_id=None, case_number=None):
+    """Create a snapshot for a specific volume with exponential backoff on rate limit errors."""
+    import asyncio
+    from botocore.exceptions import ClientError
+    max_retries = 6
+    base_delay = 2  # seconds
+    for attempt in range(1, max_retries + 1):
+        try:
+            await set_status(redis, job_id, account_id, case_number, "snapshot_create_started", {"volume_id": vol_id, "instance_id": instance_id, "attempt": attempt})
+            response = await ec2.create_snapshot(
+                VolumeId=vol_id,
+                Description=f"Snapshot of {instance_id} volume {vol_id}",
+                TagSpecifications=[{
+                    "ResourceType": "snapshot",
+                    "Tags": [
+                        {"Key": "InstanceId", "Value": instance_id},
+                        {"Key": "JobId", "Value": job_id}
+                    ],
+                }],
+            )
+            snapshot_id = response["SnapshotId"]
+            await set_status(redis, job_id, account_id, case_number, "snapshot_creation_initiated", {
+                "volume_id": vol_id,
+                "snapshot_id": snapshot_id,
+                "instance_id": instance_id
+            })
+            return snapshot_id
+        except ClientError as e:
+            error_msg = str(e)
+            if "SnapshotCreationPerVolumeRateExceeded" in error_msg and attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1)) + (attempt * 0.5)
+                await set_status(redis, job_id, account_id, case_number, "rate_limited_retry", {"volume_id": vol_id, "attempt": attempt, "delay": delay, "error": error_msg})
+                await asyncio.sleep(delay)
+                continue
+            await set_status(redis, job_id, account_id, case_number, "failed", {"volume_id": vol_id, "error": error_msg, "instance_id": instance_id})
+            raise
+
+
+async def monitor_snapshots(ec2, redis, job_id, instance_id, snapshot_map, case_number=None, account_id=None):
+    """Monitor the progress of snapshot creation and report percentage completion."""
+    pending_snapshots = set(snapshot_map.values())
+    total = len(snapshot_map)
+    completed = 0
+    errors = []
+    progress_map = {sid: 0 for sid in snapshot_map.values()}
+
+    while pending_snapshots:
+        await asyncio.sleep(30)  # Poll more frequently for better progress reporting
+        resp = await ec2.describe_snapshots(SnapshotIds=list(pending_snapshots))
+
+        for snap in resp["Snapshots"]:
+            sid = snap["SnapshotId"]
+            state = snap["State"]
+            progress = snap.get("Progress", "0%")
+            progress_pct = int(progress.replace("%", "")) if "%" in progress else 0
+            progress_map[sid] = progress_pct
+            volume_id = next((v for v, s in snapshot_map.items() if s == sid), None)
+            status = state
+            error_msg = None
+            if state == "completed":
+                completed += 1
+                pending_snapshots.discard(sid)
+            elif state == "error":
+                error_msg = snap.get("StatusMessage", "Snapshot failed")
+                errors.append({"snapshot_id": sid, "error": error_msg})
+                pending_snapshots.discard(sid)
+            percentage = int((completed / total) * 100) if total else 100
+            await set_status(redis, job_id, account_id, case_number, "snapshot_progress", {
+                "job_id": job_id,
+                "case_number": case_number,
+                "instance_id": instance_id,
+                "account_id": account_id,
+                "volume_id": volume_id,
+                "snapshot_id": sid,
+                "status": status,
+                "percentage": percentage,
+                "progress": progress,
+                "errors": error_msg
+            })
+    # Final completion status
+    await set_status(redis, job_id, account_id, case_number, "completed", {
+        "job_id": job_id,
+        "case_number": case_number,
+        "instance_id": instance_id,
+        "account_id": account_id,
+        "snapshots": snapshot_map,
+        "status": "completed",
+        "percentage": 100,
+        "errors": errors
+    })
+
+
+async def create_snapshots(instance_id: str, job_id: str, redis, case_number=None, account_id=None):
+    """Main function to create snapshots for all volumes of an instance."""
+    session = await get_cross_account_session(role_arn)
+
+    # Step 1: Get instance details and volume IDs
+    instance, volume_ids = await get_instance_details(session, instance_id)
+    await set_status(redis, job_id, account_id, case_number, "volumes_found", {"instance_id": instance_id, "volume_ids": volume_ids})
+
+    snapshot_map = {}
+
+    # Step 2: Create snapshots for each volume
+    async with session.client("ec2", region_name="us-east-1") as ec2:
+        for vol_id in volume_ids:
+            snapshot_id = await create_snapshot_for_volume(ec2, redis, job_id, instance_id, vol_id, account_id=account_id, case_number=case_number)
+            snapshot_map[vol_id] = snapshot_id
+
+        # Step 3: Monitor snapshot progress
+        await monitor_snapshots(ec2, redis, job_id, instance_id, snapshot_map, case_number, account_id)
+
+    return [{"volume_id": v, "snapshot_id": s} for v, s in snapshot_map.items()]
+
+
+async def get_instance_details(session, instance_id: str, job_id: str = None, account_id: str = None, case_number: str = None, redis=None):
+    """Fetch instance details and volume IDs, and log to DB/Redis if job_id is provided."""
+    async with session.client("ec2", region_name="us-east-1") as ec2:
+        reservations = await ec2.describe_instances(InstanceIds=[instance_id])
+        instance = reservations["Reservations"][0]["Instances"][0]
+        volume_ids = [bdm["Ebs"]["VolumeId"] for bdm in instance["BlockDeviceMappings"]]
+    # Log to DB/Redis if job_id is provided
+    if job_id:
+        from app.helpers.status_updater import set_status
+        await set_status(
+            redis=redis,
+            job_id=job_id,
+            account_id=account_id or instance.get("AccountId"),
+            case_number=case_number,
+            stage="instance_details_fetched",
+            data={
+                "instance_id": instance_id,
+                "volume_ids": volume_ids,
+                "instance_details": instance
+            }
+        )
+    return instance, volume_ids

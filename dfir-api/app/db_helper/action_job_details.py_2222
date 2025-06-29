@@ -1,0 +1,44 @@
+# app/db_helper/action_job_details.py
+
+from app.models.action_job_detail import ActionJobDetail
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
+import json
+import uuid
+
+async def insert_action_log(
+    session: AsyncSession,
+    job_id: str,
+    instance_id: str,
+    action: str,
+    status: str,
+    volume_id: str = None,
+    snapshot_id: str = None,
+    progress: int = None,
+    message: str = None,
+    details: dict = None,
+    case_number: str = None,
+    account_id: str = None,
+    percentage: int = None,
+    errors: str = None,
+):
+    entry = ActionJobDetail(
+        job_id=uuid.UUID(job_id),
+        instance_id=instance_id,
+        volume_id=volume_id,
+        snapshot_id=snapshot_id,
+        action=action,
+        status=status,
+        progress=progress,
+        message=message,
+        details=json.loads(json.dumps(details)) if details else None,
+        case_number=case_number,
+        account_id=account_id,
+        percentage=percentage,
+        errors=errors,
+        timestamp=datetime.utcnow()
+    )
+    session.add(entry)
+    await session.commit()
+
+
